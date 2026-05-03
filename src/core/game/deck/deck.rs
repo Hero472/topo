@@ -1,60 +1,31 @@
-use serde::{Deserialize, Serialize};
 use rand::seq::SliceRandom;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Suit { Hearts, Diamonds, Clubs, Spades }
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum DeckColor { Red, Blue }
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct Card {
-    pub suit:   Suit,
-    pub value:  u8,         // 1=Ace, 11=Jack, 12=Queen, 13=King
-    pub deck:   DeckColor,  // which of the two decks this came from
-}
-
-impl Card {
-    pub fn display_value(&self) -> &'static str {
-        match self.value {
-            1  => "A",
-            2  => "2",
-            3  => "3", 
-            4  => "4", 
-            5  => "5", 
-            6  => "6",
-            7  => "7", 
-            8  => "8", 
-            9  => "9", 
-            10 => "10", 
-            11 => "J",
-            12 => "Q",
-            13 => "K",
-            _  => unreachable!(),
-        }
-    }
-}
+use crate::core::game::{card::{Card, Suit}, deck::DeckColor};
 
 #[derive(Debug, Clone)]
 pub struct Deck {
-    cards: Vec<Card>,
+    pub cards: Vec<Card>,
 }
 
 impl Deck {
-    pub fn double() -> Self {
-        let mut cards = Vec::with_capacity(104);
 
-        for color in [DeckColor::Red, DeckColor::Blue] {
+    pub fn new_with_colors(colors: &[DeckColor]) -> Self {
+        let suit_count = 4;
+        let values_per_suit = 13;
+        let capacity = suit_count * values_per_suit * colors.len();
+        let mut cards = Vec::with_capacity(capacity);
+        for &color in colors {
             for suit in [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
                 for value in 1..=13 {
                     cards.push(Card { suit, value, deck: color });
                 }
             }
         }
-
         Self { cards }
+    }
+
+    pub fn double() -> Self {
+        Self::new_with_colors(&[DeckColor::Red, DeckColor::Blue])
     }
 
     pub fn shuffle(&mut self) {
@@ -64,7 +35,6 @@ impl Deck {
 
     pub fn shuffle_with_seed(&mut self, seed: u64) {
         use rand::{SeedableRng, rngs::StdRng};
-
         let mut rng = StdRng::seed_from_u64(seed);
         self.cards.shuffle(&mut rng);
     }
@@ -101,7 +71,7 @@ mod tests {
     fn double_deck_has_all_values() {
         let deck = Deck::double();
 
-        let mut counts = [0; 14]; // index 1..13
+        let mut counts = [0; 14];
 
         for card in deck.cards.iter() {
             counts[card.value as usize] += 1;

@@ -3,10 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::{Mutex, broadcast};
 use serde::Serialize;
 
-use crate::game::board::PlayerBoard;
-use crate::game::card::Card;
-use crate::game::scale::Scale;
-use crate::game::state::GameState;
+use crate::core::game::{board::PlayerBoard, card::Card, scale::Scale, state::GameState};
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -48,7 +45,7 @@ impl RoomHandle {
     pub fn new(room_id: String, turn_seconds: u64) -> Self {
         let (tx, _) = broadcast::channel(32);
         Self {
-            state: Arc::new(Mutex::new(GameState::new(room_id, turn_seconds))),
+            state: Arc::new(Mutex::new(GameState::new(room_id, [1,2].to_vec(), 4, 13, 5))),
             tx,
         }
     }
