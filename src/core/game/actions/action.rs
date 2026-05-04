@@ -31,6 +31,4 @@ pub enum Action {
     MovePersonalToSide {
         stack_idx: usize,
     },
-    /// Explicitly end the current turn (advance to next player).
-    EndTurn
 }
