@@ -65,25 +65,19 @@ impl RoomHandle {
         });
     }
 
-    /// Apply a player action and broadcast the resulting game events.
     pub async fn apply_action(&self, player_id: usize, action: Action) {
         // 1. Lock game state and apply the move
         let mut state = self.state.lock().await;
         let result = state.apply_move(player_id, action.clone());
-        // (We’ll need action later; clone it before dropping state? We can clone action or
-        //  gather the events immediately while still holding the lock, then drop lock and dispatch.)
-        // Let's generate events while we still hold state.
         let events = self.generate_events(&state, &action, &result, player_id);
         drop(state);
 
-        // 2. Dispatch each event with appropriate privacy
         for event in events {
             let to = match &event {
-                ServerEvent::CardDrawn { .. } => Some(player_id),        // private to drawer
+                ServerEvent::CardDrawn { .. } => Some(player_id),
                 ServerEvent::OpponentUpdate { player_id: pid, .. } => {
-                    // send to the *other* player
                     let other = self.other_player_id(player_id).await;
-                    Some(other.unwrap())    // safe if game always has 2 players
+                    Some(other.unwrap())
                 },
                 _ => None,   // public
             };
