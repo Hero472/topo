@@ -95,7 +95,7 @@ impl GameState {
     }
 
     /// (Re)start the game with a fresh deck, deal, and reset scales.
-    fn start_game(&mut self) {
+    pub fn start_game(&mut self) {
         self.card_dealer = CardDealer::new(self.seed);
         let (personal_piles, hands) = self.card_dealer.deal_initial(
             self.players.len(),

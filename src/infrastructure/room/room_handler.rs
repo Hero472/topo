@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use rand::RngExt;
 use tokio::sync::{Mutex, broadcast};
 
-use crate::{core::game::{actions::{Action, PlayResult}, state::GameState}, infrastructure::{message::GameMessage, server_event::ServerEvent}};
+use crate::{core::game::{actions::{Action, PlayResult}, state::GameState}, infrastructure::{full_state::build_full_state, message::GameMessage, server_event::ServerEvent}};
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -47,13 +47,78 @@ impl RoomHandle {
 
     /// Add a player to the room. Call when WebSocket connects.
     pub async fn add_player(&self, player_id: usize, username: String) {
-        self.players.lock().await.insert(player_id, username.clone());
-        // Broadcast public join event
+        // Store player name
+        {
+            let mut players = self.players.lock().await;
+            players.insert(player_id, username.clone());
+        }
+
+        // Broadcast public join
         let _ = self.tx.send(GameMessage {
             to: None,
             event: ServerEvent::PlayerJoined { player_id, username },
         });
-        // If both players are present, you could start the game etc.
+
+        // If the second player just joined, start the game with a random starter
+        {
+            let players = self.players.lock().await;
+            if players.len() == 2 {
+                drop(players);
+
+                let mut state = self.state.lock().await;
+                state.start_game();   // now pub
+
+                // Randomly choose who plays first
+                let starter_idx = rand::rng().random_range(0..2);
+                state.current_turn = starter_idx;
+                let starter_id = state.players[starter_idx].player_idx;
+
+                // Gather usernames for FullState
+                let usernames: HashMap<usize, String> = {
+                    let pmap = self.players.lock().await;
+                    pmap.clone()
+                };
+
+                // Build FullState for both players
+                let events: Vec<GameMessage> = state
+                    .players
+                    .iter()
+                    .map(|p| {
+                        let opp = state
+                            .players
+                            .iter()
+                            .find(|o| o.player_idx != p.player_idx)
+                            .unwrap();
+                        let opp_username =
+                            usernames.get(&opp.player_idx).cloned().unwrap_or_default();
+
+                        let full_state = build_full_state(&state, p.player_idx, opp_username)
+                            .expect("Player board must exist");
+                        
+                        GameMessage {
+                            to: Some(p.player_idx),   // private to each player
+                            event: full_state,
+                        }
+                    })
+                    .collect();
+
+                drop(state);
+
+                // Send public "game started" with the starter
+                let _ = self.tx.send(GameMessage {
+                    to: None,
+                    event: ServerEvent::GameStarted {
+                        current_player_id: starter_id,
+                        turn_seconds: 60,   // or a config value
+                    },
+                });
+
+                // Send private full states
+                for gm in events {
+                    let _ = self.tx.send(gm);
+                }
+            }
+        }
     }
 
     /// Remove a player (on disconnect).
