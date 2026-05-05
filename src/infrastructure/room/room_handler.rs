@@ -16,7 +16,7 @@ pub struct RoomHandle {
     pub state: SharedRoom,
     tx:        broadcast::Sender<GameMessage>,
     // player_id -> username (for events that include a username)
-    players:   Mutex<HashMap<usize, String>>,
+    pub players:   Mutex<HashMap<usize, String>>,
 }
 
 impl RoomHandle {

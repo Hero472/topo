@@ -1,7 +1,7 @@
 // Main entry point for the Actix Web application
 
-use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
-use topo::infrastructure::room::room_handler::RoomRegistry;
+use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse};
+use topo::{core::game::{actions::Action, deck::DeckColor}, infrastructure::{room::room_handler::{RoomHandle, RoomRegistry}, server_event::{OpponentView, ServerEvent}, views::{PersonalPileView, PlayerBoardView}}};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ async fn ws_handler(
 ) -> Result<HttpResponse, actix_web::Error> {
     let room_id = path.into_inner();
 
-    // Extract player_id and username from query string (e.g. ?player_id=1&username=Alice)
+    // Extract player_id and username from query string
     let query = req.query_string();
     let player_id: usize = extract_query_param(query, "player_id")
         .unwrap_or_default()
@@ -55,81 +55,38 @@ async fn ws_handler(
             .clone()
     };
 
-    // Add the player to the room (broadcasts PlayerJoined)
-    room.add_player(player_id, username.clone()).await;
+    // Add the player to the room
+    room.add_player(player_id, username).await;
 
-    // Send full state snapshot to the connecting player
-    {
+    // Determine opponent's player_idx and username (assumes exactly two players: 1 and 2)
+    let opponent_id = if player_id == 1 { 2 } else { 1 };
+    let opponent_username = room.players.lock().await
+        .get(&opponent_id)
+        .cloned()
+        .unwrap_or_default();
+
+    // --- Build the FullState while holding the game lock ---
+    let full_state = {
         let game_state = room.state.lock().await;
-        if let Some(your_board) = game_state.players.iter().find(|p| p.player_idx == player_id) {
-            let opponent = game_state.players.iter().find(|p| p.player_idx != player_id);
-            let full_state = ServerEvent::FullState {
-                your_board: your_board.clone(),
-                your_turn: game_state.current_turn == player_id,
-                opponent: opponent.map(|opp| OpponentView {
-                    player_id: opp.player_idx,
-                    username: String::new(),   // you can fill it from the room's players map later
-                    personal_count: opp.personal.len(),
-                    personal_top: opp.personal_top().cloned(),
-                    side: opp.side.clone(),
-                }).unwrap_or_else(|| OpponentView {
-                    player_id: 0,
-                    username: "".into(),
-                    personal_count: 0,
-                    personal_top: None,
-                    side: [vec![], vec![], vec![], vec![]],
-                }),
-                scales: game_state.scale_manager.scales.clone(),
-                turn_seconds_remaining: game_state.turn_seconds,
-            };
-            let msg = serde_json::to_string(&full_state).unwrap();
-            // We don't have the session yet, we need to upgrade to WebSocket first.
-            // We'll send this right after the upgrade.
-        }
-    }
+        build_full_state(&game_state, player_id, opponent_username)
+            .expect("Player board must exist")   // we know it does because we created it
+    };
 
-    // Upgrade to WebSocket
+    // Upgrade the connection to WebSocket
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, body)?;
 
-    // Send the FullState we prepared (we can do it now that we have the session)
-    // But we already dropped the lock, so we either re-lock or store the FullState earlier.
-    // Better: re-lock briefly to send FullState again (it's cheap).
-    {
-        let game_state = room.state.lock().await;
-        if let Some(your_board) = game_state.players.iter().find(|p| p.player_idx == player_id) {
-            let opponent = game_state.players.iter().find(|p| p.player_idx != player_id);
-            let full_state = ServerEvent::FullState {
-                your_board: your_board.clone(),
-                your_turn: game_state.current_turn == player_id,
-                opponent: opponent.map(|opp| OpponentView {
-                    player_id: opp.player_idx,
-                    username: String::new(),
-                    personal_count: opp.personal.len(),
-                    personal_top: opp.personal_top().cloned(),
-                    side: opp.side.clone(),
-                }).unwrap_or_else(|| OpponentView {
-                    player_id: 0,
-                    username: "".into(),
-                    personal_count: 0,
-                    personal_top: None,
-                    side: [vec![], vec![], vec![], vec![]],
-                }),
-                scales: game_state.scale_manager.scales.clone(),
-                turn_seconds_remaining: game_state.turn_seconds,
-            };
-            let msg = serde_json::to_string(&full_state).unwrap();
-            let _ = session.text(msg).await;
-        }
-    }
+    // Send the FullState immediately to the new client
+    let full_state_json = serde_json::to_string(&full_state).unwrap();
+    let _ = session.text(full_state_json).await;
 
     // Subscribe to room events
     let mut event_rx = room.subscribe();
 
-    // Clone the session for the writer task
+    // Clone session for the writer task
     let mut session_clone = session.clone();
 
-    // Writer task: forward events to WebSocket
-    let forward_task = actix_rt::spawn(async move {
+    // Writer task: forward events to the WebSocket (filtered by `to` field)
+    let _forward_task = actix_rt::spawn(async move {
         while let Ok(game_msg) = event_rx.recv().await {
             let should_send = game_msg.to.map_or(true, |id| id == player_id);
             if should_send {
@@ -172,4 +129,60 @@ fn extract_query_param(query: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn build_full_state(
+    game_state: &topo::core::game::state::GameState,
+    player_id: usize,
+    opponent_username: String,
+) -> Option<ServerEvent> {
+    let your_board = game_state.players.iter()
+        .find(|p| p.player_idx == player_id)?;
+
+    // Personal pile view (top card + colors of hidden cards)
+    let personal_count = your_board.personal.len();
+    let personal_top = your_board.personal_top().cloned();
+    // Colors from top to bottom (top first)
+    let colors: Vec<DeckColor> = your_board.personal.iter()
+        .rev()                              // top is now first
+        .map(|card| card.deck)
+        .collect();
+
+    let personal_view = PersonalPileView {
+        count: personal_count,
+        top: personal_top,
+        colors,
+    };
+
+    let your_board_view = PlayerBoardView {
+        player_idx: your_board.player_idx,
+        personal: personal_view,
+        side: your_board.side.clone(),
+        hand: your_board.hand.clone(),
+    };
+
+    let opponent = game_state.players.iter()
+        .find(|p| p.player_idx != player_id)
+        .map(|opp| OpponentView {
+            player_id: opp.player_idx,
+            username: opponent_username,
+            personal_count: opp.personal.len(),
+            personal_top: opp.personal_top().cloned(),
+            side: opp.side.clone(),
+        })
+        .unwrap_or_else(|| OpponentView {
+            player_id: 0,
+            username: String::new(),
+            personal_count: 0,
+            personal_top: None,
+            side: [vec![], vec![], vec![], vec![]],
+        });
+
+    Some(ServerEvent::FullState {
+        your_board: your_board_view,
+        your_turn: game_state.current_turn == player_id,
+        opponent,
+        scales: game_state.scale_manager.scales.clone(),
+        turn_seconds_remaining: game_state.turn_seconds,
+    })
 }

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::core::game::{board::PlayerBoard, card::Card, scale::Scale};
+use crate::{core::game::{card::Card, scale::Scale}, infrastructure::views::PlayerBoardView};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -61,7 +61,7 @@ pub enum ServerEvent {
 
     // ── Full state sync (join/reconnect) ──
     FullState {
-        your_board: PlayerBoard,
+        your_board: PlayerBoardView,
         your_turn: bool,
         opponent: OpponentView,
         scales: Vec<Scale>,
