@@ -51,7 +51,11 @@ async fn ws_handler(
         let mut rooms = state.rooms.lock().await;
         rooms
             .entry(room_id.clone())
-            .or_insert_with(|| Arc::new(RoomHandle::new(room_id.clone(), 60, vec![1, 2])))
+            .or_insert_with(|| {
+                // The first player to join creates the room with both IDs.
+                // If you later want to assign dynamic IDs, adjust here.
+                RoomHandle::new_arc(room_id.clone(), 60, vec![1, 2])
+            })
             .clone()
     };
 
@@ -60,45 +64,50 @@ async fn ws_handler(
 
     // Determine opponent's player_idx and username (assumes exactly two players: 1 and 2)
     let opponent_id = if player_id == 1 { 2 } else { 1 };
-    let opponent_username = room.players.lock().await
+    let opponent_username = room
+        .players
+        .lock()
+        .await
         .get(&opponent_id)
         .cloned()
         .unwrap_or_default();
 
     // --- Build the FullState while holding the game lock ---
-    let full_state = {
+    let full_state_event = {
         let game_state = room.state.lock().await;
+        // `build_full_state` now returns a Result<ServerEvent, ...> because
+        // we removed all panics. Unwrap is safe here because we just created
+        // the game state and know the player exists.
         build_full_state(&game_state, player_id, opponent_username)
-            .expect("Player board must exist")   // we know it does because we created it
+            .expect("Player board must exist at connection time")
     };
 
     // Upgrade the connection to WebSocket
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, body)?;
 
-    // Send the FullState immediately to the new client
-    let full_state_json = serde_json::to_string(&full_state).unwrap();
-    let _ = session.text(full_state_json).await;
+    // ── Send the FullState immediately (before subscription) ───────────
+    let initial_json = serde_json::to_string(&full_state_event).unwrap();
+    let _ = session.text(initial_json).await;
 
-    // Subscribe to room events
-    let mut event_rx = room.subscribe();
+    // ── Subscribe to the per‑player message channel ────────────────────
+    let mut event_rx = room.subscribe_player(player_id).await;
 
-    // Clone session for the writer task
+    // ── Forwarding task: read from channel and send to WebSocket ───────
     let mut session_clone = session.clone();
-
-    // Writer task: forward events to the WebSocket (filtered by `to` field)
-    let _forward_task = actix_rt::spawn(async move {
-        while let Ok(game_msg) = event_rx.recv().await {
-            let should_send = game_msg.to.map_or(true, |id| id == player_id);
-            if should_send {
-                let json = serde_json::to_string(&game_msg.event).unwrap();
-                if session_clone.text(json).await.is_err() {
-                    break; // connection closed
-                }
+    actix_rt::spawn(async move {
+        while let Some(game_msg) = event_rx.recv().await {
+            // `game_msg.to` is Some(id) for private messages, None for public.
+            // Since we subscribed with our player_id, all messages are already
+            // meant for us (private ones are only sent to our player_id, public
+            // ones are sent to everyone). So we can skip the `to` check.
+            let json = serde_json::to_string(&game_msg.event).unwrap();
+            if session_clone.text(json).await.is_err() {
+                break; // connection closed
             }
         }
     });
 
-    // Reader task: receive actions from the client
+    // ── Action reader: receive moves from the client ───────────────────
     let room_clone = room.clone();
     actix_rt::spawn(async move {
         while let Some(Ok(msg)) = msg_stream.recv().await {

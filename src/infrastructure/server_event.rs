@@ -59,6 +59,12 @@ pub enum ServerEvent {
         reason: String,
     },
 
+    TurnTimedOut {
+        player_id: usize,
+        next_player_id: usize,
+        turn_seconds: u64,
+    },
+
     // ── Full state sync (join/reconnect) ──
     FullState {
         your_board: PlayerBoardView,
