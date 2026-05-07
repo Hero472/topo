@@ -33,14 +33,14 @@ pub fn build_full_state(
     let opponent = game_state.players.iter()
         .find(|p| p.player_idx != player_id)
         .map(|opp| OpponentView {
-            player_id: opp.player_idx,
+            player_idx: opp.player_idx,
             username: opponent_username,
             personal_count: opp.personal.len(),
             personal_top: opp.personal_top().cloned(),
             side: opp.side.clone(),
         })
         .unwrap_or_else(|| OpponentView {
-            player_id: 0,
+            player_idx: 0,
             username: String::new(),
             personal_count: 0,
             personal_top: None,

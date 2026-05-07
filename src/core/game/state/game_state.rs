@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::game::{
-    actions::{Action, PlayResult, TurnPhase}, board::PlayerBoard, card::Card, dealer::CardDealer, scale::ScaleManager
+    actions::{Action, PlayResult, TurnPhase}, board::PlayerBoard, card::Card, dealer::CardDealer, scale::{Scale, ScaleManager}
 };
 
 /// The overall game lifecycle.
@@ -94,6 +94,10 @@ impl GameState {
         }
     }
 
+    pub fn player(&self, id: usize) -> Option<PlayerBoard> {
+        self.players.iter().find(|p| p.player_idx == id).cloned()
+    }
+
     /// (Re)start the game with a fresh deck, deal, and reset scales.
     pub fn start_game(&mut self) {
         self.card_dealer = CardDealer::new(self.seed);
@@ -126,6 +130,10 @@ impl GameState {
 
     pub fn is_playing(&self) -> bool {
         self.phase == GamePhase::Playing
+    }
+
+    pub fn scale(&self, id: &usize) -> &Scale {
+        &self.scale_manager.scales[*id]
     }
 
     // ── Winning & end‑game ────────────────────────────────────

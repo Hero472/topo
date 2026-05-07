@@ -41,7 +41,7 @@ pub enum ServerEvent {
 
     // ── Private: opponent’s visible state changed ──
     OpponentUpdate {
-        player_id: usize,    // player whose stats changed
+        player_idx: usize,
         personal_count: usize,
         personal_top: Option<Card>,
         side: [Vec<Card>; 4],
@@ -76,7 +76,7 @@ pub enum ServerEvent {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct OpponentView {
-    pub player_id: usize,
+    pub player_idx: usize,
     pub username: String,
     pub personal_count: usize,
     pub personal_top: Option<Card>,
