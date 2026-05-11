@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::game::{
-    actions::{Action, PlayResult, TurnPhase}, board::PlayerBoard, card::Card, dealer::CardDealer, scale::{Scale, ScaleManager}
+    actions::{Action, PlayResult, TurnPhase},
+    board::PlayerBoard,
+    card::Card,
+    dealer::CardDealer,
+    scale::{Scale, ScaleManager}
 };
 
 /// The overall game lifecycle.
@@ -125,6 +129,9 @@ impl GameState {
     }
 
     pub fn current_player_id(&self) -> Option<usize> {
+        if self.phase != GamePhase::Playing {
+            return None;
+        }
         self.players.get(self.current_turn).map(|p| p.player_idx)
     }
 
@@ -191,8 +198,10 @@ impl GameState {
         }
     }
 
-
-    fn advance_turn(&mut self) {
+    pub fn advance_turn(&mut self) {
+        if self.phase != GamePhase::Playing {
+            return;
+        }
         self.current_turn = (self.current_turn + 1) % self.players.len();
         self.turn_phase = TurnPhase::Draw;
         self.turn_seconds = 60;

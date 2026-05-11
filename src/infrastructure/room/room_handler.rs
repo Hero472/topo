@@ -32,7 +32,7 @@ pub struct RoomHandle {
     /// Per‑player message senders – used to push events to connected WebSocket tasks.
     player_senders: Mutex<HashMap<usize, mpsc::UnboundedSender<GameMessage>>>,
 
-    /// player_id → username
+    /// player_id - username
     pub players: Mutex<HashMap<usize, String>>,
 
     /// True after the game has been started (second player joined).
@@ -162,20 +162,32 @@ impl RoomHandle {
         self.set_turn_timer(starter_id).await;
     }
 
-    pub async fn remove_player(&self, player_id: usize) {
-        // Cancel any running timer
+    /// Removes a player from the room.
+    /// Returns `true` if the room is now **empty** (no players left).
+    pub async fn remove_player(&self, player_id: usize) -> bool {
+        // Cancel any running turn timer
         self.cancel_timer().await;
 
-        // Remove the player from all maps
-        self.players.lock().await.remove(&player_id);
+        // Remove the player from both maps, collect remaining player IDs
+        let remaining_ids = {
+            let mut players = self.players.lock().await;
+            players.remove(&player_id);
+            players.keys().cloned().collect::<Vec<usize>>()
+        };
         self.player_senders.lock().await.remove(&player_id);
 
-        // Notify everyone that the game is over
-        self.broadcast(ServerEvent::GameOver {
-            winner_id: 0,
-            reason: "Opponent disconnected".into(),
-        })
-        .await;
+        // If exactly one player remains, they win by forfeit
+        if remaining_ids.len() == 1 {
+            let winner_id = remaining_ids[0];
+            self.broadcast(ServerEvent::GameOver {
+                winner_id,
+                reason: "Opponent disconnected".into(),
+            })
+            .await;
+        }
+
+        // Return true if the room is now completely empty
+        remaining_ids.is_empty()
     }
 
     // ── Action handling ───────────────────────────────────────────
@@ -253,13 +265,28 @@ impl RoomHandle {
                             let mut state = room.state.lock().await;
                             let current = state.players.get(state.current_turn)
                                 .map(|p| p.player_idx);
+
                             if current != Some(player_id) {
-                                // Turn already changed, stop this timer
                                 (false, 0)
                             } else {
-                                let next_idx = (state.current_turn + 1) % state.players.len();
-                                state.current_turn = next_idx;
-                                let next = state.players[next_idx].player_idx;
+                                state.advance_turn();
+                                let next = state.current_player_id().unwrap();
+
+                                let player_ids: Vec<usize> = state.players.iter()
+                                    .map(|p| p.player_idx)
+                                    .collect();
+
+                                for id in player_ids {
+                                    room.send_full_state(id).await;
+                                }
+
+                                drop(state);
+
+                                println!(
+                                    "⏰ Timeout: turn advanced → current_turn index={}, next player_id={}",
+                                    state.current_turn,
+                                    next
+                                );
                                 (true, next)
                             }
                         };
@@ -414,5 +441,24 @@ impl RoomHandle {
     async fn other_player_id(&self, current: usize) -> Option<usize> {
         let players = self.players.lock().await;
         players.keys().copied().find(|&id| id != current)
+    }
+
+    async fn send_full_state(&self, state: &GameState, player_id: usize) {
+        // Fetch opponent username from the room's players map (non‑blocking)
+        let usernames = self.players.lock().await.clone();
+
+        // find opponent's id
+        let opp_id = state.players.iter()
+            .find(|p| p.player_idx != player_id)
+            .map(|p| p.player_idx);
+
+        let opponent_username = opp_id
+            .and_then(|id| usernames.get(&id))
+            .cloned()
+            .unwrap_or_default();
+
+        if let Some(event) = build_full_state(state, player_id, opponent_username) {
+            self.send_to(player_id, event).await;
+        }
     }
 }

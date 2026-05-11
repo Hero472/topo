@@ -1,4 +1,10 @@
-use crate::{core::game::{deck::DeckColor, state::GameState}, infrastructure::{server_event::{OpponentView, ServerEvent}, views::{PersonalPileView, PlayerBoardView}}};
+use crate::{
+    core::game::{deck::DeckColor, state::GameState},
+    infrastructure::{
+        server_event::{OpponentView, ServerEvent},
+        views::{PersonalPileView, PlayerBoardView}
+    }
+};
 
 pub fn build_full_state(
     game_state: &GameState,
@@ -8,10 +14,9 @@ pub fn build_full_state(
     let your_board = game_state.players.iter()
         .find(|p| p.player_idx == player_id)?;
 
-    // Personal pile view (top card + colors of hidden cards)
     let personal_count = your_board.personal.len();
     let personal_top = your_board.personal_top().cloned();
-    // Colors from top to bottom (top first)
+
     let colors: Vec<DeckColor> = your_board.personal.iter()
         .rev()                              // top is now first
         .map(|card| card.deck)
@@ -35,6 +40,7 @@ pub fn build_full_state(
         .map(|opp| OpponentView {
             player_idx: opp.player_idx,
             username: opponent_username,
+            hand_count: opp.hand_len(),
             personal_count: opp.personal.len(),
             personal_top: opp.personal_top().cloned(),
             side: opp.side.clone(),
@@ -42,16 +48,24 @@ pub fn build_full_state(
         .unwrap_or_else(|| OpponentView {
             player_idx: 0,
             username: String::new(),
+            hand_count: 5,
             personal_count: 0,
             personal_top: None,
             side: [vec![], vec![], vec![], vec![]],
         });
 
+    let draw_top = game_state.card_dealer.peek().clone();
+    let color_top = draw_top.map(|card| card.deck);
+
+    println!("current_id: {:?}, player_id: {:?}, current_turn {:?}", game_state.current_player_id(), Some(player_id), game_state.current_turn);
+
     Some(ServerEvent::FullState {
         your_board: your_board_view,
-        your_turn: game_state.current_turn == player_id,
+        your_turn: game_state.current_player_id() == Some(player_id),
         opponent,
         scales: game_state.scale_manager.scales.clone(),
+        dealer_top: color_top,
+        dealer_count: game_state.card_dealer.draw_pile.remaining(),
         turn_seconds_remaining: game_state.turn_seconds,
     })
 }

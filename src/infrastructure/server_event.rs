@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{core::game::{card::Card, scale::Scale}, infrastructure::views::PlayerBoardView};
+use crate::{core::game::{card::Card, deck::DeckColor, scale::Scale}, infrastructure::views::PlayerBoardView};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -71,6 +71,8 @@ pub enum ServerEvent {
         your_turn: bool,
         opponent: OpponentView,
         scales: Vec<Scale>,
+        dealer_top: Option<DeckColor>,
+        dealer_count: usize,
         turn_seconds_remaining: u64,
     },
 }
@@ -78,6 +80,7 @@ pub enum ServerEvent {
 pub struct OpponentView {
     pub player_idx: usize,
     pub username: String,
+    pub hand_count: usize,
     pub personal_count: usize,
     pub personal_top: Option<Card>,
     pub side: [Vec<Card>; 4],

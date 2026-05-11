@@ -11,7 +11,7 @@ pub struct AppState {
     pub rooms: RoomRegistry
 }
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
     let app_state = web::Data::new(AppState {
         rooms: Arc::new(Mutex::new(HashMap::new())),
@@ -128,6 +128,8 @@ async fn ws_handler(
 
     // ── Read actions from client ──
     let room_clone = room.clone();
+    let room_id_clone = room_id.clone();          // already available
+    let state_clone = state.clone();              // web::Data<AppState>
     actix_rt::spawn(async move {
         while let Some(Ok(msg)) = msg_stream.recv().await {
             match msg {
@@ -142,7 +144,11 @@ async fn ws_handler(
                     }
                 }
                 actix_ws::Message::Close(_) => {
-                    room.remove_player(player_id).await;
+                    let empty = room_clone.remove_player(player_id).await;
+                    if empty {
+                        let mut rooms = state_clone.rooms.lock().await;
+                        rooms.remove(&room_id_clone);
+                    }
                     break;
                 }
                 _ => {}

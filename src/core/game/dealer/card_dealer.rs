@@ -49,6 +49,9 @@ impl CardDealer {
         self.draw_pile.draw_one()
     }
 
+    pub fn peek(&self) -> Option<&Card> {
+        self.draw_pile.cards.last()
+    }
 
     pub fn draw_up_to(&mut self, n: usize) -> Vec<Card> {
         let mut cards = Vec::with_capacity(n);
