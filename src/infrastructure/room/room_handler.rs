@@ -1,9 +1,10 @@
+use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::collections::HashMap;
 use std::time::Duration;
 use rand::RngExt;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -83,26 +84,26 @@ impl RoomHandle {
     /// Create a per‑player message channel and return the receiver.
     pub async fn subscribe_player(&self, player_id: usize) -> mpsc::UnboundedReceiver<GameMessage> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.player_senders.lock().await.insert(player_id, tx);
+        self.player_senders.lock().unwrap().insert(player_id, tx);
         rx
     }
 
     /// Push an event to a single player (private).
-    async fn send_to(&self, player_id: usize, event: ServerEvent) {
+    fn send_to(&self, player_id: usize, event: ServerEvent) {
         let msg = GameMessage {
             to: Some(player_id),
             event,
         };
-        let senders = self.player_senders.lock().await;
+        let senders = self.player_senders.lock().unwrap();
         if let Some(tx) = senders.get(&player_id) {
             let _ = tx.send(msg);
         }
     }
 
     /// Push an event to all connected players (public).
-    async fn broadcast(&self, event: ServerEvent) {
+    fn broadcast(&self, event: ServerEvent) {
         let msg = GameMessage { to: None, event };
-        let senders = self.player_senders.lock().await;
+        let senders = self.player_senders.lock().unwrap();
         for tx in senders.values() {
             let _ = tx.send(msg.clone());
         }
@@ -112,12 +113,12 @@ impl RoomHandle {
 
     pub async fn add_player(self: &Arc<Self>, player_id: usize, username: String) {
         // 1. Register the player’s username
-        self.players.lock().await.insert(player_id, username.clone());
-        self.broadcast(ServerEvent::PlayerJoined { player_id, username }).await;
+        self.players.lock().unwrap().insert(player_id, username.clone());
+        self.broadcast(ServerEvent::PlayerJoined { player_id, username });
 
         // 2. If this is the second player, start the game once
         let should_start = {
-            let players = self.players.lock().await;
+            let players = self.players.lock().unwrap();
             players.len() == 2 && !self.game_started.swap(true, Ordering::SeqCst)
         };
 
@@ -128,7 +129,7 @@ impl RoomHandle {
 
     /// Called exactly once when the second player joins.
     async fn start_game(self: &Arc<Self>) {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().unwrap();
         state.start_game();
 
         // Randomly pick who plays first
@@ -137,26 +138,27 @@ impl RoomHandle {
         let starter_id = state.players[starter_idx].player_idx;
 
         // Get usernames for FullState generation
-        let usernames: HashMap<usize, String> = self.players.lock().await.clone();
+        let usernames = self.players.lock().unwrap().clone();
 
         // Build private FullState for each player
         for p in &state.players {
             if let Some(opp) = state.players.iter().find(|o| o.player_idx != p.player_idx) {
                 let opp_name = usernames.get(&opp.player_idx).cloned().unwrap_or_default();
                 if let Some(full_state) = build_full_state(&state, p.player_idx, opp_name) {
-                    self.send_to(p.player_idx, full_state).await;
+                    self.send_to(p.player_idx, full_state);
                 }
             }
         }
 
         drop(state); // early release
 
+        println!("[ROOM] Game started. Starter: player {}", starter_id);
+
         // Public game‑started announcement
         self.broadcast(ServerEvent::GameStarted {
             current_player_id: starter_id,
             turn_seconds: self.turn_seconds,
-        })
-        .await;
+        });
 
         // Kick off the turn timer for the first player
         self.set_turn_timer(starter_id).await;
@@ -166,15 +168,15 @@ impl RoomHandle {
     /// Returns `true` if the room is now **empty** (no players left).
     pub async fn remove_player(&self, player_id: usize) -> bool {
         // Cancel any running turn timer
-        self.cancel_timer().await;
+        self.cancel_timer();
 
         // Remove the player from both maps, collect remaining player IDs
         let remaining_ids = {
-            let mut players = self.players.lock().await;
+            let mut players = self.players.lock().unwrap();
             players.remove(&player_id);
             players.keys().cloned().collect::<Vec<usize>>()
         };
-        self.player_senders.lock().await.remove(&player_id);
+        self.player_senders.lock().unwrap().remove(&player_id);
 
         // If exactly one player remains, they win by forfeit
         if remaining_ids.len() == 1 {
@@ -182,8 +184,7 @@ impl RoomHandle {
             self.broadcast(ServerEvent::GameOver {
                 winner_id,
                 reason: "Opponent disconnected".into(),
-            })
-            .await;
+            });
         }
 
         // Return true if the room is now completely empty
@@ -192,12 +193,19 @@ impl RoomHandle {
 
     // ── Action handling ───────────────────────────────────────────
 
-    pub async fn apply_action(self: &Arc<Self>, player_id: usize, action: Action) {
+    pub fn apply_action(
+        self: &Arc<Self>,
+        player_id: usize,
+        action: Action,
+        is_timeout: bool
+    ) {
+        println!("[ROOM] Apply action {:?} from player {}", action, player_id);
+
         // 1. Apply the move and collect resulting events
         let (events, result, next_player_id) = {
-            let mut state = self.state.lock().await;
+            let mut state = self.state.lock().unwrap();
             let result = state.apply_move(player_id, action.clone());
-            let events = self.generate_events(&state, &action, &result, player_id);
+            let events = self.generate_events(&state, &action, &result, player_id, is_timeout);
             let next = result.next_player(&state);
             drop(state);
             (events, result, next)
@@ -207,24 +215,25 @@ impl RoomHandle {
         for event in &events {
             match event {
                 ServerEvent::CardDrawn { .. } => {
-                    self.send_to(player_id, event.clone()).await;
+                    self.send_to(player_id, event.clone());
                 }
                 ServerEvent::OpponentUpdate { .. } => {
-                    if let Some(other) = self.other_player_id(player_id).await {
-                        self.send_to(other, event.clone()).await;
+                    if let Some(other) = self.other_player_id(player_id) {
+                        self.send_to(other, event.clone());
                     }
                 }
                 _ => {
-                    self.broadcast(event.clone()).await;
+                    self.broadcast(event.clone());
                 }
             }
         }
 
         // 3. If the turn ended, cancel the timer and start a new one for the next player
         if result.turn_ended() {
-            self.cancel_timer().await;
+            println!("[ROOM] Turn ended. Next: {:?}", next_player_id);
+            self.cancel_timer();
             if let Some(next) = next_player_id {
-                self.set_turn_timer(next).await;
+                self.set_turn_timer(next);
             }
         }
 
@@ -234,22 +243,24 @@ impl RoomHandle {
     // ── Timer management ─────────────────────────────────────────────────────
 
     /// Cancel any active turn timer.
-    async fn cancel_timer(&self) {
-        let mut guard = self.cancel_timer.lock().await;
+    fn cancel_timer(&self) {
+        let mut guard = self.cancel_timer.lock().unwrap();
         if let Some(token) = guard.take() {
+            println!("[TIMER] Cancelling existing timer.");
             token.cancel(); // signals the loop to exit
         }
     }
 
     /// Cancel any previous timer and start a new one‑shot timeout for `player_id`.
-    async fn set_turn_timer(self: &Arc<Self>, mut player_id: usize) {
+    async fn set_turn_timer(self: &Arc<Self>, player_id: usize) {
+        println!("[TIMER] Setting timer for player {}", player_id);
         // Cancel any existing timer
-        self.cancel_timer().await;
+        self.cancel_timer();
 
         let token = CancellationToken::new();
         let cancel = token.clone();
         {
-            let mut guard = self.cancel_timer.lock().await;
+            let mut guard = self.cancel_timer.lock().unwrap();
             *guard = Some(cancel);
         }
 
@@ -257,63 +268,34 @@ impl RoomHandle {
         let turn_secs = self.turn_seconds;
 
         tokio::spawn(async move {
+            println!("[TIMER] Timer loop started for player {}", player_id);
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(turn_secs)) => {
+                        println!("[TIMER] Timeout reached for player {}", player_id);
                         // Timeout – advance the turn
-                        let (should_continue, next_id) = {
-                            let mut state = room.state.lock().await;
-                            let current = state.players.get(state.current_turn)
-                                .map(|p| p.player_idx);
 
-                            if current != Some(player_id) {
-                                (false, 0)
-                            } else {
-                                state.advance_turn();
-                                let next = state.current_player_id().unwrap();
-
-                                let player_ids: Vec<usize> = state.players.iter()
-                                    .map(|p| p.player_idx)
-                                    .collect();
-
-                                for id in player_ids {
-                                    room.send_full_state(id).await;
-                                }
-
-                                drop(state);
-
-                                println!(
-                                    "⏰ Timeout: turn advanced → current_turn index={}, next player_id={}",
-                                    state.current_turn,
-                                    next
-                                );
-                                (true, next)
-                            }
-                        };
-
-                        if !should_continue { break; }
-
-                        room.broadcast(ServerEvent::TurnTimedOut {
-                            player_id,
-                            next_player_id: next_id,
-                            turn_seconds: room.turn_seconds,
-                        }).await;
-
+                        // send TimeoutPacket
+                        let next_id = room.other_player_id(player_id).unwrap();
                         room.broadcast(ServerEvent::TurnEnded {
                             next_player_id: next_id,
                             turn_seconds: room.turn_seconds,
-                        }).await;
+                            timed_out_player_id: Some(player_id),
+                        });
 
-                        // Restart the loop for the next player
-                        player_id = next_id; // shadowing the captured variable
-                        // continue the outer loop
+                        let random_stack = rand::rng().random_range(0..4);
+                        println!("[TIMER] Auto-playing MoveToSide({}) for player {}", random_stack, player_id);
+
+                        room.apply_action(player_id, Action::MoveToSide { stack: random_stack, hand_idx: 0 }, true);
                     }
                     _ = token.cancelled() => {
                         // Turn was ended manually, loop exits
+                        println!("[TIMER] Timer cancelled for player {}", player_id);
                         break;
-                    }
+                    }   
                 }
             }
+            println!("[TIMER] Timer loop exiting for player {}", player_id);
         });
     }
 
@@ -325,6 +307,7 @@ impl RoomHandle {
         action: &Action,
         result: &PlayResult,
         player_id: usize,
+        is_timeout: bool
     ) -> Vec<ServerEvent> {
         use Action::*;
         let mut events = Vec::new();
@@ -380,11 +363,14 @@ impl RoomHandle {
                     }
                     events.push(self.opponent_update(state, player_id));
                     // Turn end announcement
-                    if let Some(next) = result.next_player(state) {
-                        events.push(ServerEvent::TurnEnded {
-                            next_player_id: next,
-                            turn_seconds: self.turn_seconds,
-                        });
+                    if !is_timeout {
+                        if let Some(next) = result.next_player(state) {
+                            events.push(ServerEvent::TurnEnded {
+                                next_player_id: next,
+                                turn_seconds: self.turn_seconds,
+                                timed_out_player_id: None,   // normal move
+                            });
+                        }
                     }
                 }
             }
@@ -438,27 +424,8 @@ impl RoomHandle {
         }
     }
 
-    async fn other_player_id(&self, current: usize) -> Option<usize> {
-        let players = self.players.lock().await;
+    fn other_player_id(&self, current: usize) -> Option<usize> {
+        let players = self.players.lock().unwrap();
         players.keys().copied().find(|&id| id != current)
-    }
-
-    async fn send_full_state(&self, state: &GameState, player_id: usize) {
-        // Fetch opponent username from the room's players map (non‑blocking)
-        let usernames = self.players.lock().await.clone();
-
-        // find opponent's id
-        let opp_id = state.players.iter()
-            .find(|p| p.player_idx != player_id)
-            .map(|p| p.player_idx);
-
-        let opponent_username = opp_id
-            .and_then(|id| usernames.get(&id))
-            .cloned()
-            .unwrap_or_default();
-
-        if let Some(event) = build_full_state(state, player_id, opponent_username) {
-            self.send_to(player_id, event).await;
-        }
     }
 }

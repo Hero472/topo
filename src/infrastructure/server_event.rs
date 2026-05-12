@@ -51,18 +51,13 @@ pub enum ServerEvent {
     TurnEnded {
         next_player_id: usize,
         turn_seconds: u64,
+        timed_out_player_id: Option<usize>,
     },
 
     // ── Game over ──
     GameOver {
         winner_id: usize,
         reason: String,
-    },
-
-    TurnTimedOut {
-        player_id: usize,
-        next_player_id: usize,
-        turn_seconds: u64,
     },
 
     // ── Full state sync (join/reconnect) ──

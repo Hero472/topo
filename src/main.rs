@@ -2,9 +2,14 @@
 
 use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse};
 use actix_cors::Cors;
-use topo::{core::game::{actions::Action}, infrastructure::{full_state::build_full_state, room::room_handler::{RoomHandle, RoomRegistry}, server_event::{OpponentView, ServerEvent}, views::{PersonalPileView, PlayerBoardView}}};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use topo::{
+    core::game::{actions::Action},
+    infrastructure::{
+        full_state::build_full_state, 
+        room::room_handler::{RoomHandle, RoomRegistry},
+    }
+};
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 pub struct AppState {
@@ -53,7 +58,7 @@ async fn ws_handler(
 
     // ── Get or create room ──
     let room = {
-        let mut rooms = state.rooms.lock().await;
+        let mut rooms = state.rooms.lock().unwrap();
         rooms
             .entry(room_id.clone())
             .or_insert_with(|| RoomHandle::new_arc(room_id.clone(), 60, vec![1, 2]))
@@ -70,14 +75,14 @@ async fn ws_handler(
     let opponent_username = room
         .players
         .lock()
-        .await
+        .unwrap()
         .get(&opponent_id)
         .cloned()
         .unwrap_or_default();
 
     // ── Build FullState (no more .expect) ──
     let full_state_event = {
-        let game_state = room.state.lock().await;
+        let game_state = room.state.lock().unwrap();
         match build_full_state(&game_state, player_id, opponent_username) {
             Some(ev) => ev,
             None => {
@@ -136,7 +141,7 @@ async fn ws_handler(
                 actix_ws::Message::Text(text) => {
                     match serde_json::from_str::<Action>(&text) {
                         Ok(action) => {
-                            room_clone.apply_action(player_id, action).await;
+                            room_clone.apply_action(player_id, action, false);
                         }
                         Err(e) => {
                             eprintln!("❌ invalid action from client: {e}");
@@ -146,7 +151,7 @@ async fn ws_handler(
                 actix_ws::Message::Close(_) => {
                     let empty = room_clone.remove_player(player_id).await;
                     if empty {
-                        let mut rooms = state_clone.rooms.lock().await;
+                        let mut rooms = state_clone.rooms.lock().unwrap();
                         rooms.remove(&room_id_clone);
                     }
                     break;

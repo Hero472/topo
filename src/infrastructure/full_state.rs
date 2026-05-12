@@ -57,11 +57,24 @@ pub fn build_full_state(
     let draw_top = game_state.card_dealer.peek().clone();
     let color_top = draw_top.map(|card| card.deck);
 
-    println!("current_id: {:?}, player_id: {:?}, current_turn {:?}", game_state.current_player_id(), Some(player_id), game_state.current_turn);
+    let your_turn = game_state
+        .players
+        .get(game_state.current_turn)
+        .map(|p| p.player_idx)
+        .unwrap_or(0) == player_id;
+        
+    println!(
+        "[FULL_STATE] player_id={}, current_turn={}, your_turn={}",
+        player_id, game_state.current_turn, your_turn
+    );
 
     Some(ServerEvent::FullState {
         your_board: your_board_view,
-        your_turn: game_state.current_player_id() == Some(player_id),
+        your_turn: game_state
+            .players
+            .get(game_state.current_turn)
+            .map(|p| p.player_idx)
+            .unwrap_or(0) == player_id,
         opponent,
         scales: game_state.scale_manager.scales.clone(),
         dealer_top: color_top,
