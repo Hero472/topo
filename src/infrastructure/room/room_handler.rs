@@ -7,6 +7,7 @@ use rand::RngExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::core::game::state::GamePhase;
 use crate::{
     core::game::{
         actions::{Action, PlayResult},
@@ -109,6 +110,30 @@ impl RoomHandle {
         }
     }
 
+    fn send_full_state(&self) {
+        let state = self.state.lock().unwrap();
+
+        let player_ids: Vec<usize> = {
+            let players = self.players.lock().unwrap();
+            players.keys().copied().collect()
+        };
+
+        for &pid in &player_ids {
+            // Find the opponent’s username for this player
+            let opp_username = {
+                let players = self.players.lock().unwrap();
+                players.iter()
+                    .find(|(id, _)| **id != pid)
+                    .map(|(_, name)| name.clone())
+                    .unwrap_or_default()
+            };
+
+            if let Some(full_state_event) = build_full_state(&state, pid, opp_username) {
+                self.send_to(pid, full_state_event);
+            }
+        }
+    }
+
     // ── Player management ────────────────────────────────────────────────────
 
     pub async fn add_player(self: &Arc<Self>, player_id: usize, username: String) {
@@ -179,7 +204,7 @@ impl RoomHandle {
         self.player_senders.lock().unwrap().remove(&player_id);
 
         // If exactly one player remains, they win by forfeit
-        if remaining_ids.len() == 1 {
+        if remaining_ids.len() == 1 && self.state.lock().unwrap().phase == GamePhase::Playing {
             let winner_id = remaining_ids[0];
             self.broadcast(ServerEvent::GameOver {
                 winner_id,
@@ -193,7 +218,7 @@ impl RoomHandle {
 
     // ── Action handling ───────────────────────────────────────────
 
-    pub fn apply_action(
+    pub async fn apply_action(
         self: &Arc<Self>,
         player_id: usize,
         action: Action,
@@ -233,7 +258,7 @@ impl RoomHandle {
             println!("[ROOM] Turn ended. Next: {:?}", next_player_id);
             self.cancel_timer();
             if let Some(next) = next_player_id {
-                self.set_turn_timer(next);
+                self.set_turn_timer(next).await;
             }
         }
 
@@ -254,7 +279,6 @@ impl RoomHandle {
     /// Cancel any previous timer and start a new one‑shot timeout for `player_id`.
     async fn set_turn_timer(self: &Arc<Self>, player_id: usize) {
         println!("[TIMER] Setting timer for player {}", player_id);
-        // Cancel any existing timer
         self.cancel_timer();
 
         let token = CancellationToken::new();
@@ -269,32 +293,47 @@ impl RoomHandle {
 
         tokio::spawn(async move {
             println!("[TIMER] Timer loop started for player {}", player_id);
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(turn_secs)) => {
-                        println!("[TIMER] Timeout reached for player {}", player_id);
-                        // Timeout – advance the turn
 
-                        // send TimeoutPacket
-                        let next_id = room.other_player_id(player_id).unwrap();
-                        room.broadcast(ServerEvent::TurnEnded {
-                            next_player_id: next_id,
-                            turn_seconds: room.turn_seconds,
-                            timed_out_player_id: Some(player_id),
-                        });
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(turn_secs)) => {
+                    println!("[TIMER] Timeout reached for player {}", player_id);
 
-                        let random_stack = rand::rng().random_range(0..4);
-                        println!("[TIMER] Auto-playing MoveToSide({}) for player {}", random_stack, player_id);
+                    // 1. Apply the forced “move to side” (does NOT end the turn)
+                    let random_stack = rand::rng().random_range(0..4);
+                    room.apply_action(
+                        player_id,
+                        Action::MoveToSide { stack: random_stack, hand_idx: 0 },
+                        true,  // is_timeout = true → no TurnEnded event from here
+                    );
 
-                        room.apply_action(player_id, Action::MoveToSide { stack: random_stack, hand_idx: 0 }, true);
-                    }
-                    _ = token.cancelled() => {
-                        // Turn was ended manually, loop exits
-                        println!("[TIMER] Timer cancelled for player {}", player_id);
-                        break;
-                    }   
+                    // 2. Manually advance the turn in the game state
+                    let next_id = {
+                        let mut state = room.state.lock().unwrap();
+                        state.advance_turn();
+                        let next = state.current_player_id().unwrap();
+                        drop(state);
+                        next
+                    };
+
+                    // 3. Send fresh FullState to every player
+                    room.send_full_state();
+
+                    // 4. Broadcast the unified TurnEnded (with timeout info)
+                    room.broadcast(ServerEvent::TurnEnded {
+                        next_player_id: next_id,
+                        turn_seconds: room.turn_seconds,
+                        timed_out_player_id: Some(player_id),
+                    });
+
+                    // 5. Cancel this timer and start the new one for the next player
+                    room.cancel_timer();
+                    room.set_turn_timer(next_id);
+                }
+                _ = token.cancelled() => {
+                    println!("[TIMER] Timer cancelled for player {}", player_id);
                 }
             }
+
             println!("[TIMER] Timer loop exiting for player {}", player_id);
         });
     }
@@ -351,26 +390,25 @@ impl RoomHandle {
             }
 
             MoveToSide { stack, .. } => {
-                if result.is_turn_ended() {
-                    if let Some(card) = state.player(player_id)
-                        .and_then(|p| p.side.get(*stack).and_then(|s| s.last().cloned()))
-                    {
-                        events.push(ServerEvent::CardPlacedOnSide {
-                            player_id,
-                            card,
-                            stack: *stack,
+                if let Some(card) = state.player(player_id)
+                    .and_then(|p| p.side.get(*stack).and_then(|s| s.last().cloned())) 
+                {
+                    events.push(ServerEvent::CardPlacedOnSide {
+                        player_id,
+                        card,
+                        stack: *stack,
+                    });
+                }
+                
+                events.push(self.opponent_update(state, player_id));
+
+                if !is_timeout && result.is_turn_ended() {
+                    if let Some(next) = result.next_player(state) {
+                        events.push(ServerEvent::TurnEnded {
+                            next_player_id: next,
+                            turn_seconds: self.turn_seconds,
+                            timed_out_player_id: None,
                         });
-                    }
-                    events.push(self.opponent_update(state, player_id));
-                    // Turn end announcement
-                    if !is_timeout {
-                        if let Some(next) = result.next_player(state) {
-                            events.push(ServerEvent::TurnEnded {
-                                next_player_id: next,
-                                turn_seconds: self.turn_seconds,
-                                timed_out_player_id: None,   // normal move
-                            });
-                        }
                     }
                 }
             }

@@ -62,7 +62,7 @@ pub fn build_full_state(
         .get(game_state.current_turn)
         .map(|p| p.player_idx)
         .unwrap_or(0) == player_id;
-        
+
     println!(
         "[FULL_STATE] player_id={}, current_turn={}, your_turn={}",
         player_id, game_state.current_turn, your_turn
