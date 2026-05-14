@@ -198,13 +198,12 @@ impl GameState {
         }
     }
 
-    pub fn advance_turn(&mut self) {
-        if self.phase != GamePhase::Playing {
-            return;
-        }
+    pub fn advance_turn(&mut self) -> usize {
+        assert_eq!(self.phase, GamePhase::Playing, "Cannot advance turn: not playing");
         self.current_turn = (self.current_turn + 1) % self.players.len();
         self.turn_phase = TurnPhase::Draw;
         self.turn_seconds = 60;
+        self.players[self.current_turn].player_idx  // panic if index missing
     }
 
     // ── Scale interaction ────────────────────────────────────
