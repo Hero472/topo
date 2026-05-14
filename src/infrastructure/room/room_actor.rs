@@ -3,7 +3,6 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
-use std::pin::Pin;
 
 use crate::core::game::actions::{Action, PlayResult};
 use crate::core::game::state::GameState;
@@ -43,7 +42,10 @@ fn send_full_state(players: &HashMap<usize, PlayerInfo>, state: &GameState) {
             .map(|(_, o)| o.username.clone())
             .unwrap_or_default();
         if let Some(event) = build_full_state(state, pid, opp_name) {
+            println!("Sending FullState to player {pid}");
             send_to(players, pid, event);
+        } else {
+            println!("build_full_state returned None for player {pid} – no full state sent");
         }
     }
 }
@@ -192,7 +194,6 @@ pub async fn room_actor(
             },
 
             Phase::Playing { current_player } => {
-                // Now we only await commands (no timer select)
                 match cmd_rx.recv().await {
                     Some(RoomCommand::PlayerAction { player_id, action }) => {
                         if player_id != *current_player {
@@ -284,13 +285,36 @@ pub async fn room_actor(
                         phase = Phase::Over;
                     }
 
+                    Some(RoomCommand::PlayerJoined { player_id, username }) => {
+                        // Update the sender and username if they're already in the game
+                        if let Some(info) = players.get_mut(&player_id) {
+                            info.username = username; // might have changed
+                        } else {
+                            // If not in players, we still need to store a sender.
+                            // But we need the sender first – PlayerJoined doesn’t carry the sender.
+                            // That means you must have already received SubscribePlayer for that ID.
+                            // You can just ignore, or store a placeholder.
+                            continue;
+                        }
+
+                        if let Some(ref game_state) = state {
+                            let opponent_name = players.iter()
+                                .find(|(id, _)| **id != player_id)
+                                .map(|(_, p)| p.username.clone())
+                                .unwrap_or_default();
+                            if let Some(event) = build_full_state(game_state, player_id, opponent_name) {
+                                // Use the stored sender from the players map (which was updated via SubscribePlayer)
+                                send_to(&players, player_id, event);
+                            }
+                        }
+                    }
+
                     None => return,
                     _ => {}
                 }
             }
 
             Phase::Over => {
-                // Drain remaining commands (clean disconnect) until channel closes
                 while let Some(_) = cmd_rx.recv().await {}
                 return;
             }

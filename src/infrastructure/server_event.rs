@@ -71,6 +71,7 @@ pub enum ServerEvent {
         turn_seconds_remaining: u64,
     },
 }
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OpponentView {
     pub player_idx: usize,

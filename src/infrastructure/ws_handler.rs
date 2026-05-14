@@ -14,53 +14,6 @@ pub struct WsQuery {
     username: Option<String>,
 }
 
-pub async fn ws_handler_dummy(
-    req: HttpRequest,
-    body: web::Payload,
-    _state: web::Data<AppState>,
-    path: web::Path<String>,
-    _query: web::Query<WsQuery>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let room_id = path.into_inner();
-
-    // Log the raw request immediately
-    println!(">>> Raw request: {} {}, query: {}", req.method(), req.uri(), req.query_string());
-
-    // Manually extract player_id (default to 0)
-    let player_id = req
-        .query_string()
-        .split('&')
-        .find(|s| s.starts_with("player_id="))
-        .and_then(|s| s.split('=').nth(1))
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0);
-
-    let username = req
-        .query_string()
-        .split('&')
-        .find(|s| s.starts_with("username="))
-        .and_then(|s| s.split('=').nth(1))
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "Anonymous".into());
-
-    println!("ws_handler room={}, player={}, username={}", room_id, player_id, username);
-
-    // Attempt WebSocket upgrade
-    let (response, mut session, _) = actix_ws::handle(&req, body)?;
-    println!("✅ WebSocket upgrade ok, keeping alive");
-
-    // Keep the session alive indefinitely
-    tokio::spawn(async move {
-        // Just hold the session – do nothing
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-        }
-    });
-
-    Ok(response)
-}
-
-
 pub async fn ws_handler(
     req: HttpRequest,
     body: web::Payload,
@@ -79,12 +32,12 @@ pub async fn ws_handler(
         rooms
             .entry(room_id.clone())
             .or_insert_with(|| {
-                // Adjust to match your actual new_arc signature.
-                // If it now takes 2 args, remove vec![1, 2].
                 RoomHandle::new_arc(room_id.clone(), 60)
             })
             .clone()
     };
+
+    let mut event_rx = room.subscribe_player(player_id);
 
     let _ = room.add_player(player_id, username);
 
@@ -98,8 +51,6 @@ pub async fn ws_handler(
             return Err(e);
         }
     };
-
-    let mut event_rx = room.subscribe_player(player_id);
 
     // 6. Combined send + receive loop
     let room_clone = room.clone();

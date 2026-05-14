@@ -3,7 +3,7 @@
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use actix_cors::Cors;
 use topo::app_state::AppState;
-use topo::infrastructure::ws_handler::{ws_handler, ws_handler_dummy};
+use topo::infrastructure::ws_handler::ws_handler;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 

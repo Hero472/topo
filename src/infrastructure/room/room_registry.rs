@@ -1,5 +1,3 @@
-// ── Shared types ──────────────────────────────────────────────────────────────
-
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use crate::{core::game::state::GameState, infrastructure::room::room_handler::RoomHandle};
