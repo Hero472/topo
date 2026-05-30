@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::core::game::card::Card;
-use crate::core::game::actions::PlayResult;
+use crate::core::game::{actions::{MoveError, MoveSuccess}, card::Card};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scale {
@@ -46,17 +45,17 @@ impl Scale {
         self.cards.len() == 12
     }
 
-    pub fn push(&mut self, card: Card) -> PlayResult {
+    pub fn push(&mut self, card: Card) -> Result<MoveSuccess, MoveError> {
         if !self.accepts(&card) {
-            return PlayResult::DoesNotFit;
+            return Err(MoveError::DoesNotFit)
         }
 
         self.cards.push(card);
 
-        PlayResult::ScalePlaced {
+        Ok(MoveSuccess::ScalePlaced {
             scale_id: self.id,
             completed: self.is_complete(),
-        }
+        })
     }
 }
 
@@ -76,43 +75,43 @@ mod tests {
     #[test]
     fn cannot_start_with_king() {
         let mut scale = Scale::new(0);
-        assert!(matches!(scale.push(card(13)), PlayResult::DoesNotFit));
+        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit)));
     }
 
     #[test]
     fn accepts_normal_sequence() {
         let mut scale = Scale::new(0);
-        assert!(matches!(scale.push(card(1)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(2)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(3)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(4)), PlayResult::ScalePlaced { .. }));
+        assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(2)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(3)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(4)), Ok(MoveSuccess::ScalePlaced { .. })));
     }
 
     #[test]
     fn king_replaces_missing_value() {
         let mut scale = Scale::new(0);
-        assert!(matches!(scale.push(card(1)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(2)), PlayResult::ScalePlaced { .. }));
+        assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(2)), Ok(MoveSuccess::ScalePlaced { .. })));
         // K replaces 3
-        assert!(matches!(scale.push(card(13)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(4)), PlayResult::ScalePlaced { .. }));
+        assert!(matches!(scale.push(card(13)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(4)), Ok(MoveSuccess::ScalePlaced { .. })));
     }
 
     #[test]
     fn cannot_stack_kings() {
         let mut scale = Scale::new(0);
-        assert!(matches!(scale.push(card(1)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(13)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(13)), PlayResult::DoesNotFit));
+        assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(13)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit)));
     }
 
     #[test]
     fn rejects_wrong_value() {
         let mut scale = Scale::new(0);
-        assert!(matches!(scale.push(card(1)), PlayResult::ScalePlaced { .. }));
-        assert!(matches!(scale.push(card(2)), PlayResult::ScalePlaced { .. }));
+        assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
+        assert!(matches!(scale.push(card(2)), Ok(MoveSuccess::ScalePlaced { .. })));
         // Expected is 3
-        assert!(matches!(scale.push(card(5)), PlayResult::DoesNotFit));
+        assert!(matches!(scale.push(card(5)), Err(MoveError::DoesNotFit)));
     }
 
     #[test]
@@ -121,7 +120,7 @@ mod tests {
         let sequence = vec![1, 2, 13, 4, 5, 6, 7, 13, 9, 10, 11, 13];
         for v in sequence {
             assert!(
-                matches!(scale.push(card(v)), PlayResult::ScalePlaced { .. }),
+                matches!(scale.push(card(v)), Ok(MoveSuccess::ScalePlaced { .. })),
                 "Failed at value {}",
                 v
             );
@@ -135,7 +134,7 @@ mod tests {
         let sequence = vec![1, 2, 3, 4, 13, 6, 13, 8, 9, 13, 11, 12];
         for v in sequence {
             assert!(
-                matches!(scale.push(card(v)), PlayResult::ScalePlaced { .. }),
+                matches!(scale.push(card(v)), Ok(MoveSuccess::ScalePlaced { .. })),
                 "Failed at value {}",
                 v
             );
@@ -148,12 +147,12 @@ mod tests {
         let mut scale = Scale::new(0);
         for v in 1..=11 {
             match scale.push(card(v)) {
-                PlayResult::ScalePlaced { completed: false, .. } => {}
+                Ok(MoveSuccess::ScalePlaced { completed: false, .. }) => {}
                 other => panic!("Unexpected result before completion: {:?}", other),
             }
         }
         match scale.push(card(12)) {
-            PlayResult::ScalePlaced { completed: true, .. } => {}
+            Ok(MoveSuccess::ScalePlaced { completed: true, .. }) => {}
             _ => panic!("Expected completion on last card"),
         }
     }
@@ -165,6 +164,6 @@ mod tests {
             scale.push(card(v));
         }
         let result = scale.push(card(13));
-        assert!(matches!(result, PlayResult::ScalePlaced { completed: true, .. }));
+        assert!(matches!(result, Ok(MoveSuccess::ScalePlaced { completed: true, .. })));
     }
 }

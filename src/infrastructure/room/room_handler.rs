@@ -10,8 +10,6 @@ use crate::{
     },
 };
 
-// ── Room handle ───────────────────────────────────────────────────────────────
-
 pub struct RoomHandle {
     cmd_tx: mpsc::UnboundedSender<RoomCommand>
 }
@@ -27,7 +25,6 @@ impl RoomHandle {
 
     pub fn subscribe_player(&self, player_id: usize) -> mpsc::UnboundedReceiver<GameMessage> {
         let (tx, rx) = mpsc::unbounded_channel();
-        // If the actor is dead, the command will be ignored, but we still return a receiver.
         let _ = self.cmd_tx.send(RoomCommand::SubscribePlayer { player_id, sender: tx });
         rx
     }

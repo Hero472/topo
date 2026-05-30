@@ -1,7 +1,7 @@
 pub mod action;
 pub mod phase;
-pub mod result;
+pub mod move_result;
 
 pub use action::Action;
-pub use result::PlayResult;
+pub use move_result::{MoveSuccess, MoveError};
 pub use phase::TurnPhase;

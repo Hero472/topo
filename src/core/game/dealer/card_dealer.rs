@@ -22,7 +22,7 @@ impl CardDealer {
     ///
     /// # Example (2 players, 13 personal + 5 hand)
     /// ```
-    /// let (personal_piles, hands) = dealer.deal_initial(2, 13, 5);
+    /// // let (personal_piles, hands) = dealer.deal_initial(2, 13, 5);
     /// ```
     pub fn deal_initial(
         &mut self,

@@ -4,3 +4,4 @@ pub mod message;
 pub mod views;
 pub mod full_state;
 pub mod ws_handler;
+pub mod error;

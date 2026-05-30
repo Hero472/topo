@@ -3,9 +3,11 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
+use log::{info, debug, warn, error};
 
-use crate::core::game::actions::{Action, PlayResult};
+use crate::core::game::actions::{Action, MoveSuccess, MoveError};
 use crate::core::game::state::GameState;
+use crate::infrastructure::error::{ErrorCode, ErrorDetails};
 use crate::infrastructure::full_state::build_full_state;
 use crate::infrastructure::message::GameMessage;
 use crate::infrastructure::room::room_command::RoomCommand;
@@ -18,20 +20,29 @@ struct PlayerInfo {
 
 
 fn broadcast(players: &HashMap<usize, PlayerInfo>, event: &ServerEvent) {
-    for info in players.values() {
-        let _ = info.tx.send(GameMessage {
+    debug!("Broadcasting event: {:?}", event);
+    for (&pid, info) in players.iter() {
+        if let Err(e) = info.tx.send(GameMessage {
             to: None,
             event: event.clone(),
-        });
+        }
+        ) {
+            warn!("Failed to send broadcast to player {}: {}", pid, e);
+        }
     }
 }
 
 fn send_to(players: &HashMap<usize, PlayerInfo>, player_id: usize, event: ServerEvent) {
+    debug!("Sending to player {}: {:?}", player_id, event);
     if let Some(info) = players.get(&player_id) {
-        let _ = info.tx.send(GameMessage {
+        if let Err(e) = info.tx.send(GameMessage {
             to: Some(player_id),
             event,
-        });
+        }) {
+            warn!("Failed to send to player {}: {}", player_id, e);
+        }
+    } else {
+        warn!("Cannot send to unknown player {}", player_id);
     }
 }
 
@@ -42,10 +53,10 @@ fn send_full_state(players: &HashMap<usize, PlayerInfo>, state: &GameState) {
             .map(|(_, o)| o.username.clone())
             .unwrap_or_default();
         if let Some(event) = build_full_state(state, pid, opp_name) {
-            println!("Sending FullState to player {pid}");
+            debug!("Sending FullState to player {}", pid);
             send_to(players, pid, event);
         } else {
-            println!("build_full_state returned None for player {pid} – no full state sent");
+            warn!("build_full_state returned None for player {} – no full state sent", pid);
         }
     }
 }
@@ -54,9 +65,10 @@ fn process_action(
     players: &HashMap<usize, PlayerInfo>,
     state: &GameState,
     action: &Action,
-    result: &PlayResult,
+    result: &MoveSuccess,
     acting_player: usize
 ) {
+    debug!("Generating events for player {} action {:?} result {:?}", acting_player, action, result);
     let events = generate_events(state, action, result, acting_player, false);
 
     for event in &events {
@@ -81,8 +93,7 @@ pub async fn room_actor(
     mut cmd_rx: mpsc::UnboundedReceiver<RoomCommand>,
     cmd_tx: mpsc::UnboundedSender<RoomCommand>,
 ) {
-    println!("🎮 room_actor started for room {room_id}");
-    // ── Actor‑owned state ─────────────────────────────────────────────────
+    info!("🎮 room_actor started for room {}", room_id);
 
     let mut state: Option<GameState> = None;
     let mut players: HashMap<usize, PlayerInfo> = HashMap::new();
@@ -91,9 +102,7 @@ pub async fn room_actor(
     // ── State machine phases ──────────────────────────────────────────────
     enum Phase {
         Lobby,
-        Playing {
-            current_player: usize
-        },
+        Playing { current_player: usize },
         Over,
     }
 
@@ -106,19 +115,24 @@ pub async fn room_actor(
         tx: &mpsc::UnboundedSender<RoomCommand>,
     ) {
         if let Some(token) = current_cancel.take() {
+            debug!("Cancelling previous timer for player {}", player_id);
             token.cancel();
         }
         let token = CancellationToken::new();
         let cancel = token.clone();
         *current_cancel = Some(cancel);
 
+        debug!("Starting turn timer for player {}: {} seconds", player_id, seconds);
         let tx = tx.clone();
         tokio::spawn(async move {
             tokio::select! {
                 _ = sleep(Duration::from_secs(seconds)) => {
+                    debug!("Turn timeout for player {}", player_id);
                     let _ = tx.send(RoomCommand::TurnTimeout { player_id });
                 }
-                _ = token.cancelled() => {}
+                _ = token.cancelled() => {
+                    debug!("Timer cancelled for player {}", player_id);
+                }
             }
         });
     }
@@ -128,6 +142,7 @@ pub async fn room_actor(
             Phase::Lobby => loop {
                 match cmd_rx.recv().await {
                     Some(RoomCommand::SubscribePlayer { player_id, sender }) => {
+                        debug!("Player {} subscribed (sender registered)", player_id);
                         players.entry(player_id).or_insert(PlayerInfo {
                             username: String::new(),
                             tx: sender,
@@ -136,9 +151,10 @@ pub async fn room_actor(
 
                     Some(RoomCommand::PlayerJoined { player_id, username }) => {
                         if let Some(info) = players.get_mut(&player_id) {
+                            info!("Player {} ({}) joined room {}", player_id, username, room_id);
                             info.username = username.clone();
                         } else {
-                            // Should not happen normally, but handle gracefully
+                            warn!("PlayerJoined for unsubscribed player {}", player_id);
                             continue;
                         }
 
@@ -150,6 +166,7 @@ pub async fn room_actor(
                         // When we have exactly two players, start the game
                         if players.len() == 2 {
                             let player_ids: Vec<usize> = players.keys().copied().collect();
+                            info!("Both players present, starting game in room {}. Players: {:?}", room_id, player_ids);
                             let mut new_state = GameState::new(
                                 room_id.clone(),
                                 player_ids,
@@ -159,10 +176,9 @@ pub async fn room_actor(
                             );
                             new_state.start_game();
 
-                            // Randomly choose who goes first
                             let starter_id = new_state.current_player_id().unwrap();
 
-                            // Send initial full state to both
+                            info!("Game started. Current player: {}", starter_id);
                             send_full_state(&players, &new_state);
                             broadcast(&players, &ServerEvent::GameStarted {
                                 current_player_id: starter_id,
@@ -183,12 +199,16 @@ pub async fn room_actor(
 
                     // Player leaves before game starts – remove them
                     Some(RoomCommand::PlayerLeft { player_id }) => {
+                        info!("Player {} left room {} (lobby)", player_id, room_id);
                         players.remove(&player_id);
-                        // If a player subscribed but never joined, we might also drop them
                         broadcast(&players, &ServerEvent::PlayerLeft { player_id });
                     }
 
-                    None => return, // channel closed, terminate actor
+                    None => {
+                        info!("Command channel closed, terminating room_actor for room {}", room_id);
+
+                        return
+                    } // channel closed, terminate actor
                     _ => {}
                 }
             },
@@ -196,23 +216,58 @@ pub async fn room_actor(
             Phase::Playing { current_player } => {
                 match cmd_rx.recv().await {
                     Some(RoomCommand::PlayerAction { player_id, action }) => {
+                        debug!("Received action from player {}: {:?}", player_id, action);
+
                         if player_id != *current_player {
+                            debug!("Not player {}'s turn (current: {})", player_id, *current_player);
+
+                            send_to(&players, player_id, ServerEvent::Error {
+                                code: ErrorCode::NotYourTurn,
+                                message: Some("It's not your turn.".into()),
+                                details: Some(ErrorDetails {
+                                    player_id: Some(player_id),
+                                    action: Some(format!("{:?}", action)),
+                                    card_id: None,
+                                }),
+                            });
                             continue;
                         }
 
-                        // Cancel the current timer because the player acted
+                        // Apply move directly on the real game state
+                        let result = match state.as_mut().unwrap().apply_move(player_id, action.clone()) {
+                            Ok(success) => success,
+                            Err(move_err) => {
+                                let code = match move_err {
+                                    MoveError::DoesNotFit      => ErrorCode::InvalidMove,
+                                    MoveError::NotAllowed      => ErrorCode::InvalidMove,
+                                    MoveError::InvalidIndex{..} => ErrorCode::CardNotFound,
+                                    MoveError::NotYourTurn     => ErrorCode::NotYourTurn, // won't happen here
+                                };
+                                warn!("Invalid move by player {}: {:?} -> error: {:?}", player_id, action, move_err);
+                                send_to(&players, player_id, ServerEvent::Error {
+                                    code,
+                                    message: None,
+                                    details: Some(ErrorDetails {
+                                        player_id: Some(player_id),
+                                        action: Some(format!("{:?}", action)),
+                                        card_id: None,
+                                    }),
+                                });
+                                continue;
+                            }
+                        };
+
+                        // Move accepted – cancel timer
                         if let Some(token) = current_timer_cancel.take() {
+                            debug!("Cancelling timer for accepted move by player {}", player_id);
                             token.cancel();
                         }
 
-                        let result = {
-                            let state_mut = state.as_mut().unwrap();
-                            state_mut.apply_move(player_id, action.clone())
-                        };
                         let state_ref = state.as_ref().unwrap();
                         process_action(&players, state_ref, &action, &result, player_id);
 
-                        if let PlayResult::GameWon { winner_id } = result {
+                        if let MoveSuccess::GameWon { winner_id } = result {
+                            info!("Game won by player {} in room {}", winner_id, room_id);
                             broadcast(&players, &ServerEvent::GameOver {
                                 winner_id,
                                 reason: "All cards cleared".into(),
@@ -223,77 +278,86 @@ pub async fn room_actor(
                                 let state_mut = state.as_mut().unwrap();
                                 state_mut.advance_turn()
                             };
-                            let state_ref = state.as_ref().unwrap();
+                            info!("Turn ended. Next player: {}", next);
                             broadcast(&players, &ServerEvent::TurnEnded {
                                 next_player_id: next,
                                 turn_seconds,
                                 timed_out_player_id: None,
                             });
-                            send_full_state(&players, state_ref);
-                            // Start timer for next player
+                            send_full_state(&players, state.as_ref().unwrap());
                             start_timer(next, turn_seconds, &mut current_timer_cancel, &cmd_tx);
                             *current_player = next;
                         } else {
-                            // Turn didn't end (e.g., after Draw), restart timer for same player
+                            debug!("Turn continues for player {}", *current_player);
                             start_timer(*current_player, turn_seconds, &mut current_timer_cancel, &cmd_tx);
                         }
                     }
 
                     Some(RoomCommand::TurnTimeout { player_id }) => {
-                        // Only process if it's still the same player's turn
+                        debug!("Turn timeout received for player {}", player_id);
                         if player_id != *current_player {
+                            warn!("Timeout for wrong player: {} (current: {})", player_id, *current_player);
                             continue;
                         }
 
-                        // Cancel token is already consumed when the timer fired.
-                        // Force a move
                         let action = Action::MoveToSide {
                             stack: rand::rng().random_range(0..4),
                             hand_idx: 0,
                         };
-                        let result = {
-                            let state_mut = state.as_mut().unwrap();
-                            state_mut.apply_move(player_id, action.clone())
-                        };
-                        let state_ref = state.as_ref().unwrap();
-                        process_action(&players, state_ref, &action, &result, player_id);
 
-                        // Advance turn
+                        warn!("Player {} timed out, forcing action: {:?}", player_id, action);
+
+                        // Apply the forced move (may fail if invalid)
+                        let result = state
+                            .as_mut()
+                            .unwrap()
+                            .apply_move(player_id, action.clone());
+
+                        if let Ok(ref success) = result {
+                            process_action(&players, state.as_ref().unwrap(), &action, success, player_id);
+                        } else if let Err(ref err) = result {
+                            error!("Forced move after timeout failed for player {}: {:?}", player_id, err);
+                        }
+
                         let next = {
                             let state_mut = state.as_mut().unwrap();
                             state_mut.advance_turn()
                         };
-                        let state_ref = state.as_ref().unwrap();
+
+                        info!("Turn ended after timeout. Next player: {}", next);
                         broadcast(&players, &ServerEvent::TurnEnded {
                             next_player_id: next,
                             turn_seconds,
                             timed_out_player_id: Some(player_id),
                         });
-                        send_full_state(&players, state_ref);
+                        send_full_state(&players, state.as_ref().unwrap());
+
                         start_timer(next, turn_seconds, &mut current_timer_cancel, &cmd_tx);
                         *current_player = next;
                     }
 
                     Some(RoomCommand::PlayerLeft { player_id }) => {
+                        info!("Player {} disconnected during game in room {}", player_id, room_id);
+
                         let winner = players.keys().find(|&&id| id != player_id);
                         if let Some(&winner_id) = winner {
+                            info!("Opponent disconnected, declaring player {} winner", winner_id);
                             broadcast(&players, &ServerEvent::GameOver {
                                 winner_id,
                                 reason: "Opponent disconnected".into(),
                             });
+                        } else {
+                            warn!("No remaining player to win after disconnect?");
                         }
                         phase = Phase::Over;
                     }
 
                     Some(RoomCommand::PlayerJoined { player_id, username }) => {
-                        // Update the sender and username if they're already in the game
+                        info!("Player {} ({}) rejoined during game in room {}", player_id, username, room_id);
                         if let Some(info) = players.get_mut(&player_id) {
-                            info.username = username; // might have changed
+                            info.username = username;
                         } else {
-                            // If not in players, we still need to store a sender.
-                            // But we need the sender first – PlayerJoined doesn’t carry the sender.
-                            // That means you must have already received SubscribePlayer for that ID.
-                            // You can just ignore, or store a placeholder.
+                            warn!("PlayerJoined for unknown player {} during game", player_id);
                             continue;
                         }
 
@@ -303,18 +367,22 @@ pub async fn room_actor(
                                 .map(|(_, p)| p.username.clone())
                                 .unwrap_or_default();
                             if let Some(event) = build_full_state(game_state, player_id, opponent_name) {
-                                // Use the stored sender from the players map (which was updated via SubscribePlayer)
+                                debug!("Sending full state to re-joined player {}", player_id);
                                 send_to(&players, player_id, event);
                             }
                         }
                     }
 
-                    None => return,
+                    None => {
+                        info!("Command channel closed, terminating room_actor for room {}", room_id);
+                        return;
+                    }
                     _ => {}
                 }
             }
 
             Phase::Over => {
+                info!("Room {} game over, actor shutting down", room_id);
                 while let Some(_) = cmd_rx.recv().await {}
                 return;
             }
@@ -325,7 +393,7 @@ pub async fn room_actor(
 fn generate_events(
     state: &GameState,
     action: &Action,
-    result: &PlayResult,
+    result: &MoveSuccess,
     player_id: usize,
     _is_timeout: bool
 ) -> Vec<ServerEvent> {
@@ -343,7 +411,7 @@ fn generate_events(
         }
 
         OpenScale { .. } => {
-            if let PlayResult::ScaleOpened { scale_id } = result {
+            if let MoveSuccess::ScaleOpened { scale_id } = result {
                 if let Some(card) = state.scale(scale_id).cards.last().cloned() {
                     events.push(ServerEvent::CardPlayedOnScale {
                         player_id,
@@ -357,7 +425,7 @@ fn generate_events(
         }
 
         PlayHand { .. } | PlayPersonal { .. } | PlaySide { .. } => {
-            if let PlayResult::ScalePlaced { scale_id, completed } = result {
+            if let MoveSuccess::ScalePlaced { scale_id, completed } = result {
                 if let Some(card) = state.scale(scale_id).cards.last().cloned() {
                     events.push(ServerEvent::CardPlayedOnScale {
                         player_id,
@@ -385,7 +453,7 @@ fn generate_events(
         }
 
         MovePersonalToSide { stack_idx } => {
-            if result.is_success() {
+            if matches!(result, MoveSuccess::Success) {
                 if let Some(card) = state.player(player_id)
                     .and_then(|p| p.side.get(*stack_idx).and_then(|s| s.last().cloned()))
                 {
@@ -400,12 +468,14 @@ fn generate_events(
         }
     }
 
-    if let PlayResult::GameWon { winner_id } = result {
+    if let MoveSuccess::GameWon { winner_id } = result {
         events.push(ServerEvent::GameOver {
             winner_id: *winner_id,
             reason: "All cards cleared".into(),
         });
     }
+
+    debug!("Generated {} events for player {} action {:?}", events.len(), player_id, action);
 
     events
 }

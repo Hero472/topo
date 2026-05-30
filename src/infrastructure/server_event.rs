@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{core::game::{card::Card, deck::DeckColor, scale::Scale}, infrastructure::views::PlayerBoardView};
+use crate::{core::game::{card::Card, deck::DeckColor, scale::Scale}, infrastructure::{error::{ErrorCode, ErrorDetails}, views::PlayerBoardView}};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -69,6 +69,13 @@ pub enum ServerEvent {
         dealer_top: Option<DeckColor>,
         dealer_count: usize,
         turn_seconds_remaining: u64,
+    },
+
+    Error {
+        code: ErrorCode,
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<ErrorDetails>,
     },
 }
 
