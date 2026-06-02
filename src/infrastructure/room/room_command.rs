@@ -2,6 +2,7 @@ use tokio::sync::mpsc;
 
 use crate::{core::game::actions::Action, infrastructure::message::GameMessage};
 
+#[derive(Debug)]
 pub enum RoomCommand {
     /// Register a new message sender for a player and return the receiver to the caller.
     SubscribePlayer {

@@ -8,7 +8,6 @@ use crate::core::game::{
     scale::{Scale, ScaleManager}
 };
 
-/// The overall game lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum GamePhase {
@@ -39,13 +38,12 @@ impl GameState {
         room_id: String,
         player_ids: Vec<usize>,
         seed: u64,
-        personal_count: usize,   // e.g., 13
-        hand_count: usize,       // e.g., 5
+        personal_count: usize,
+        hand_count: usize,
     ) -> Self {
         let num_players = player_ids.len();
         let mut dealer = CardDealer::new(seed);
 
-        // Distribute personal piles and hands.
         let (personal_piles, hands) = dealer.deal_initial(num_players, personal_count, hand_count);
 
         let players = player_ids
@@ -55,7 +53,6 @@ impl GameState {
             .map(|((id, personal), hand)| {
                 let mut board = PlayerBoard::new(id);
                 board.set_personal(personal);
-                // Fill hand directly (hand starts with exactly hand_count cards)
                 board.hand = hand;
                 board
             })
@@ -72,6 +69,27 @@ impl GameState {
             turn_seconds: 60,
             play_time: 0,
             seed,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_new(
+        players: Vec<PlayerBoard>,
+        current_turn: usize,
+        card_dealer: CardDealer,
+        turn_seconds: u64,
+    ) -> Self {
+        Self {
+            room_id: "test_room".to_string(),
+            phase: GamePhase::Waiting,
+            players,
+            card_dealer,
+            scale_manager: ScaleManager::new(),
+            current_turn,
+            turn_phase: TurnPhase::Draw,
+            turn_seconds,
+            play_time: 0,
+            seed: 0,
         }
     }
 

@@ -16,14 +16,6 @@ impl CardDealer {
         }
     }
 
-    /// Deals initial setup: for each player, `personal_count` cards for the personal pile,
-    /// then `hand_count` cards for the hand. Returns two vectors: personal piles and hands,
-    /// each in player order.
-    ///
-    /// # Example (2 players, 13 personal + 5 hand)
-    /// ```
-    /// // let (personal_piles, hands) = dealer.deal_initial(2, 13, 5);
-    /// ```
     pub fn deal_initial(
         &mut self,
         num_players: usize,
