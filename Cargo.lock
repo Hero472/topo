@@ -2816,6 +2816,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "actix-ws",
+ "async-trait",
  "cargo-smith",
  "dotenvy",
  "env_logger",

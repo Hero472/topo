@@ -1,5 +1,5 @@
 use serde::Serialize;
-use crate::core::game::{card::Card, deck::DeckColor};
+use crate::core::{game::{card::Card, deck::DeckColor}, player::PlayerIdx};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PersonalPileView {
@@ -10,7 +10,7 @@ pub struct PersonalPileView {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PlayerBoardView {
-    pub player_idx: usize,
+    pub player_idx: PlayerIdx,
     pub personal: PersonalPileView,
     pub side: [Vec<Card>; 4],
     pub hand: Vec<Card>,

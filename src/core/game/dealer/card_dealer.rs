@@ -1,4 +1,4 @@
-use crate::core::game::{card::Card, deck::deck::Deck};
+use crate::core::game::{card::Card, deck::deck::Deck, state::state_types::Seed};
 
 #[derive(Debug)]
 pub struct CardDealer {
@@ -7,9 +7,9 @@ pub struct CardDealer {
 }
 
 impl CardDealer {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: Seed) -> Self {
         let mut draw_pile = Deck::double();
-        draw_pile.shuffle_with_seed(seed);
+        draw_pile.shuffle_with_seed(seed.as_usize());
         Self {
             draw_pile,
             discard_pile: vec![],
@@ -90,14 +90,14 @@ mod tests {
 
     #[test]
     fn new_dealer_initial_state() {
-        let dealer = CardDealer::new(42);
+        let dealer = CardDealer::new(Seed(42));
         assert_eq!(dealer.remaining(), 104);
         assert!(dealer.discard_pile.is_empty());
     }
 
     #[test]
     fn draw_one_reduces_remaining() {
-        let mut dealer = CardDealer::new(123);
+        let mut dealer = CardDealer::new(Seed(123));
         let before = dealer.remaining();
         let card = dealer.draw_one();
         assert!(card.is_some());
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn draw_one_returns_none_when_both_piles_empty() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         for _ in 0..104 {
             dealer.draw_one();
         }
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn recycling_triggered_when_draw_low() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         for _ in 0..94 {
             dealer.draw_one();
         }
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn recycling_not_triggered_when_discard_empty() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // draw down to 10 cards
         for _ in 0..94 {
             dealer.draw_one();
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn recycling_does_not_trigger_above_threshold() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // draw 93 cards, leaving 11
         for _ in 0..93 {
             dealer.draw_one();
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn draw_up_to_respects_available_cards() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // draw 100 cards, leaving 4
         for _ in 0..100 {
             dealer.draw_one();
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn draw_up_to_can_trigger_recycling() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // leave 5 cards
         for _ in 0..99 {
             dealer.draw_one();
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn deal_initial_does_not_trigger_recycling() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // Draw down to 10 cards using the normal round-by-round draw.
         for _ in 0..94 {
             dealer.draw_one();
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn deal_initial_respects_available_cards() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         // Draw almost everything.
         for _ in 0..100 {
             dealer.draw_one();
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn return_to_discard_accumulates_cards() {
-        let mut dealer = CardDealer::new(0);
+        let mut dealer = CardDealer::new(Seed(0));
         dealer.return_to_discard(vec![test_card(1), test_card(2)]);
         assert_eq!(dealer.discard_pile.len(), 2);
         dealer.return_to_discard(vec![test_card(3)]);
@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn shuffle_with_seed_is_deterministic() {
-        let mut dealer1 = CardDealer::new(12345);
-        let mut dealer2 = CardDealer::new(12345);
+        let mut dealer1 = CardDealer::new(Seed(12345));
+        let mut dealer2 = CardDealer::new(Seed(12345));
         let cards1: Vec<_> = (0..10).map(|_| dealer1.draw_one().unwrap()).collect();
         let cards2: Vec<_> = (0..10).map(|_| dealer2.draw_one().unwrap()).collect();
         assert_eq!(cards1, cards2);
@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn different_seeds_produce_different_order() {
-        let mut dealer1 = CardDealer::new(111);
-        let mut dealer2 = CardDealer::new(222);
+        let mut dealer1 = CardDealer::new(Seed(111));
+        let mut dealer2 = CardDealer::new(Seed(222));
         let cards1: Vec<_> = (0..10).map(|_| dealer1.draw_one().unwrap()).collect();
         let cards2: Vec<_> = (0..10).map(|_| dealer2.draw_one().unwrap()).collect();
         assert_ne!(cards1, cards2);

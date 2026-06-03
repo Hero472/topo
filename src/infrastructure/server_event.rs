@@ -1,47 +1,73 @@
 use serde::Serialize;
 
-use crate::{core::game::{card::Card, deck::DeckColor, scale::Scale}, infrastructure::{error::{ErrorCode, ErrorDetails}, views::PlayerBoardView}};
+use crate::{
+    core::{
+        game::{card::Card, deck::DeckColor, scale::Scale, state::Seconds},
+        game_index::{ScaleIdx, StackIdx},
+        player::{PlayerId, PlayerIdx}
+    }, 
+    infrastructure::{
+        error::{ErrorCode, ErrorDetails},
+        views::PlayerBoardView
+    }
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
     // ── Lobby ──
-    PlayerJoined { player_id: usize, username: String },
-    PlayerLeft   { player_id: usize },
+    PlayerJoined {
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
+        username: String 
+    },
+    PlayerLeft {
+        player_id: PlayerId,
+        player_idx: PlayerIdx 
+    },
 
     // ── Game lifecycle ──
-    GameStarted { current_player_id: usize, turn_seconds: u64 },
+    GameStarted {
+        current_player_id: PlayerId,
+        current_player_idx: PlayerIdx,
+        turn_seconds: Seconds,
+    },
 
     // ── Private: drawn card (only to the player who drew) ──
     CardDrawn {
-        player_id: usize,
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
         card: Option<Card>,
     },
 
     // ── Public: a card was placed onto a scale ──
     CardPlayedOnScale {
-        player_id: usize,
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
         card: Card,
-        scale_id: usize,
-        completed: bool,     // true when scale reaches queen
+        scale_idx: ScaleIdx,
+        completed: bool,
     },
 
     // ── Public: a card was placed onto a side stack ──
     CardPlacedOnSide {
-        player_id: usize,
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
         card: Card,
-        stack: usize,        // 0..3
+        stack_idx: StackIdx,
     },
 
     // ── Public: scale completion notice ──
     ScaleCompleted {
-        scale_id: usize,
-        by_player: usize,
+        scale_idx: ScaleIdx,
+        by_player_id: PlayerId,
+        by_player_idx: PlayerIdx,
     },
 
     // ── Private: opponent’s visible state changed ──
     OpponentUpdate {
-        player_idx: usize,
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
         personal_count: usize,
         personal_top: Option<Card>,
         side: [Vec<Card>; 4],
@@ -49,14 +75,17 @@ pub enum ServerEvent {
 
     // ── Turn ended ──
     TurnEnded {
-        next_player_id: usize,
+        next_player_id: PlayerId,
+        next_player_idx: PlayerIdx,
         turn_seconds: u64,
-        timed_out_player_id: Option<usize>,
+        timed_out_player_id: Option<PlayerId>,
+        timed_out_player_idx: Option<PlayerIdx>,
     },
 
     // ── Game over ──
     GameOver {
-        winner_id: usize,
+        winner_id: PlayerId,
+        winner_idx: PlayerIdx,
         reason: String,
     },
 
@@ -68,7 +97,7 @@ pub enum ServerEvent {
         scales: Vec<Scale>,
         dealer_top: Option<DeckColor>,
         dealer_count: usize,
-        turn_seconds_remaining: u64,
+        turn_seconds_remaining: Seconds,
     },
 
     Error {
@@ -81,7 +110,7 @@ pub enum ServerEvent {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OpponentView {
-    pub player_idx: usize,
+    pub player_idx: PlayerIdx,
     pub username: String,
     pub hand_count: usize,
     pub personal_count: usize,

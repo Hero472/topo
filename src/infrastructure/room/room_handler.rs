@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
+use crate::core::game::state::Seconds;
+use crate::core::player::PlayerId;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::{
     core::game::actions::Action,
@@ -15,11 +17,12 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn new_arc(room_id: String, turn_seconds: u64) -> Arc<Self> {
+    pub fn new_arc(room_id: String, turn_seconds: Seconds) -> Arc<Self> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let actor_tx = cmd_tx.clone();
         let handle = Arc::new(Self { cmd_tx: cmd_tx.clone() });
-        tokio::spawn(room_actor(room_id, turn_seconds, cmd_rx, actor_tx));
+
+        tokio::spawn(room_actor(room_id, turn_seconds.0, cmd_rx, actor_tx));
         handle
     }
 
@@ -28,43 +31,56 @@ impl RoomHandle {
         Self { cmd_tx }
     }
 
-    pub fn subscribe_player(&self, player_id: usize) -> mpsc::UnboundedReceiver<GameMessage> {
+    pub fn subscribe_player(&self, player_id: PlayerId) -> mpsc::UnboundedReceiver<GameMessage> {
         let (tx, rx) = mpsc::unbounded_channel();
         let _ = self.cmd_tx.send(RoomCommand::SubscribePlayer { player_id, sender: tx });
         rx
     }
 
-    pub fn add_player(&self, player_id: usize, username: String) -> Result<(), SendError<RoomCommand>> {
+    pub fn add_player(
+        &self,
+        player_id: PlayerId,
+        username: String,
+    ) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerJoined { player_id, username })
     }
 
 
-    pub fn remove_player(&self, player_id: usize) -> Result<(), SendError<RoomCommand>> {
+    pub fn remove_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerLeft { player_id })
     }
 
-    pub fn apply_action(&self, player_id: usize, action: Action) -> Result<(), SendError<RoomCommand>> {
+    pub fn apply_action(
+        &self,
+        player_id: PlayerId,
+        action: Action,
+    ) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerAction { player_id, action })
     }
 }
 
 #[cfg(test)]
 mod unit_tests {
-    use crate::infrastructure::server_event::ServerEvent;
+    use crate::{core::player::PlayerIdx, infrastructure::server_event::ServerEvent};
 
-use super::*;
+    use super::*;
     use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    fn id(n: u8) -> PlayerId {
+        PlayerId(Uuid::from_u128(n as u128))
+    }
 
     #[tokio::test]
     async fn add_player_sends_player_joined_command() {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let handle = RoomHandle::new_with_tx(cmd_tx);
 
-        handle.add_player(1, "Alice".to_string()).unwrap();
+        handle.add_player(id(1), "Alice".to_string()).unwrap();
 
         match cmd_rx.recv().await.unwrap() {
             RoomCommand::PlayerJoined { player_id, username } => {
-                assert_eq!(player_id, 1);
+                assert_eq!(player_id, id(1));
                 assert_eq!(username, "Alice");
             }
             other => panic!("Expected PlayerJoined, got {:?}", other),
@@ -76,11 +92,11 @@ use super::*;
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let handle = RoomHandle::new_with_tx(cmd_tx);
 
-        handle.remove_player(42).unwrap();
+        handle.remove_player(id(42)).unwrap();
 
         match cmd_rx.recv().await.unwrap() {
             RoomCommand::PlayerLeft { player_id } => {
-                assert_eq!(player_id, 42);
+                assert_eq!(player_id, id(42));
             }
             other => panic!("Expected PlayerLeft, got {:?}", other),
         }
@@ -92,11 +108,11 @@ use super::*;
         let handle = RoomHandle::new_with_tx(cmd_tx);
 
         let action = Action::Draw;
-        handle.apply_action(3, action.clone()).unwrap();
+        handle.apply_action(id(3), action.clone()).unwrap();
 
         match cmd_rx.recv().await.unwrap() {
             RoomCommand::PlayerAction { player_id, action: received_action } => {
-                assert_eq!(player_id, 3);
+                assert_eq!(player_id, id(3));
                 assert_eq!(received_action, action);
             }
             other => panic!("Expected PlayerAction, got {:?}", other),
@@ -104,26 +120,27 @@ use super::*;
     }
 
     #[tokio::test]
-async fn subscribe_player_sends_subscribe_command_and_returns_receiver() {
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
-    let handle = RoomHandle::new_with_tx(cmd_tx);
+    async fn subscribe_player_sends_subscribe_command_and_returns_receiver() {
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let handle = RoomHandle::new_with_tx(cmd_tx);
 
-    let mut _player_rx = handle.subscribe_player(99);
+        let mut _player_rx = handle.subscribe_player(id(99));
 
-    match cmd_rx.recv().await.unwrap() {
-        RoomCommand::SubscribePlayer { player_id, sender } => {
-            assert_eq!(player_id, 99);
-            // Just send a dummy message to ensure the sender works
-            let msg = GameMessage {
-                to: None,
-                event: ServerEvent::PlayerJoined {
-                    player_id: 99,
-                    username: "Joe".to_string(),
-                },
-            };
-            assert!(sender.send(msg).is_ok());
+        match cmd_rx.recv().await.unwrap() {
+            RoomCommand::SubscribePlayer { player_id, sender } => {
+                assert_eq!(player_id, id(99));
+                // Send a dummy event to verify the sender works
+                let msg = GameMessage {
+                    to: None,
+                    event: ServerEvent::PlayerJoined {
+                        player_id: id(99),
+                        player_idx: PlayerIdx(0),
+                        username: "Joe".to_string(),
+                    },
+                };
+                assert!(sender.send(msg).is_ok());
+            }
+            other => panic!("Expected SubscribePlayer, got {:?}", other),
         }
-        other => panic!("Expected SubscribePlayer, got {:?}", other),
     }
-}
 }
