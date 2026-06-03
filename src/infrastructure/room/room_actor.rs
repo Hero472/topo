@@ -497,3 +497,294 @@ fn opponent_update(state: &GameState, player_id: usize) -> ServerEvent {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::game::{
+        card::{Card, Suit}, deck::DeckColor, scale::Scale, state::GameState
+    };
+    use crate::infrastructure::server_event::ServerEvent;
+    use tokio::sync::mpsc;
+
+    fn test_game_state() -> GameState {
+        let player_ids = vec![1, 2];
+        let mut gs = GameState::new("room".into(), player_ids, 42, 13, 5);
+        gs.start_game();
+        gs
+    }
+
+    #[test]
+    fn broadcast_sends_to_all_players() {
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx: tx1 });
+        players.insert(2, PlayerInfo { username: "b".into(), tx: tx2 });
+
+        let event = ServerEvent::GameStarted { current_player_id: 1, turn_seconds: 30 };
+        broadcast(&players, &event);
+
+        let msg1 = rx1.try_recv().unwrap();
+        let msg2 = rx2.try_recv().unwrap();
+        assert_eq!(msg1.event, event);
+        assert_eq!(msg2.event, event);
+        assert!(rx1.try_recv().is_err());
+        assert!(rx2.try_recv().is_err());
+    }
+
+    #[test]
+    fn broadcast_handles_failed_send_gracefully() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx });
+
+        let event = ServerEvent::GameStarted { current_player_id: 1, turn_seconds: 30 };
+        broadcast(&players, &event);
+    }
+
+    #[test]
+    fn send_to_sends_to_specific_player() {
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx: tx1 });
+        players.insert(2, PlayerInfo { username: "b".into(), tx: tx2 });
+
+        let event = ServerEvent::CardDrawn { player_id: 1, card: None };
+        send_to(&players, 2, event.clone());
+
+        // Player 2 should receive, player 1 should not
+        let msg = rx2.try_recv().unwrap();
+        assert_eq!(msg.event, event);
+        assert!(rx1.try_recv().is_err());
+    }
+
+    #[test]
+    fn send_to_unknown_player_logs_warning_no_panic() {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx });
+        let event = ServerEvent::CardDrawn { player_id: 1, card: None };
+        send_to(&players, 99, event); // should not panic
+    }
+
+    #[test]
+    fn send_full_state_sends_correct_state_to_each_player() {
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "Alice".into(), tx: tx1 });
+        players.insert(2, PlayerInfo { username: "Bob".into(), tx: tx2 });
+
+        let state = test_game_state();
+
+        send_full_state(&players, &state);
+
+        // Player 1 should receive FullState with opponent name "Bob"
+        let msg1 = rx1.try_recv().unwrap();
+        if let ServerEvent::FullState { opponent, .. } = msg1.event {
+            assert_eq!(opponent.username, "Bob");
+        } else {
+            panic!("Expected FullState");
+        }
+
+        // Player 2 should receive FullState with opponent name "Alice"
+        let msg2 = rx2.try_recv().unwrap();
+        if let ServerEvent::FullState { opponent, .. } = msg2.event {
+            assert_eq!(opponent.username, "Alice");
+        } else {
+            panic!("Expected FullState");
+        }
+    }
+
+    #[test]
+    fn opponent_update_returns_correct_info_for_existing_opponent() {
+        let state = test_game_state(); // players 1 and 2
+        let event = opponent_update(&state, 1);
+        match event {
+            ServerEvent::OpponentUpdate { player_idx, personal_count, personal_top, side } => {
+                assert_eq!(player_idx, 2);
+                // Both have 13 personal cards each at start
+                assert_eq!(personal_count, 13);
+                assert!(personal_top.is_some());
+                assert_eq!(side.len(), 4);
+            }
+            _ => panic!("Wrong event type"),
+        }
+    }
+
+    #[test]
+    fn opponent_update_fallback_for_missing_opponent() {
+        let mut state = test_game_state();
+        state.players.retain(|p| p.player_idx == 1);
+        let event = opponent_update(&state, 1);
+        match event {
+            ServerEvent::OpponentUpdate { player_idx, personal_count, personal_top, side } => {
+                assert_eq!(player_idx, 0);
+                assert_eq!(personal_count, 0);
+                assert!(personal_top.is_none());
+                assert_eq!(side, [vec![], vec![], vec![], vec![]]);
+            }
+            _ => panic!("Wrong event type"),
+        }
+    }
+
+    #[test]
+    fn generate_events_draw() {
+        let mut state = test_game_state();
+        let card = Card { deck: DeckColor::Red, suit: Suit::Hearts, value: 5 };
+        state.card_dealer.draw_pile.cards.push(card.clone());
+
+        let result = state.apply_move(1, Action::Draw).unwrap();
+        let events = generate_events(&state, &Action::Draw, &result, 1, false);
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ServerEvent::CardDrawn { player_id, card: drawn } => {
+                assert_eq!(*player_id, 1);
+                assert_eq!(drawn.as_ref(), Some(&card));
+            }
+            _ => panic!("Expected CardDrawn"),
+        }
+    }
+
+    #[test]
+    fn generate_events_open_scale() {
+        let mut state = test_game_state();
+        // Manually create a scale
+        let mut scale = Scale::new(0);
+        let ace = Card { deck: DeckColor::Red, suit: Suit::Hearts, value: 1 };
+        scale.push(ace).unwrap();
+        state.scale_manager.scales.push(scale);
+        let result = MoveSuccess::ScaleOpened { scale_id: 0 };
+        let events = generate_events(&state, &Action::OpenScale { hand_idx: 0 }, &result, 1, false);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            ServerEvent::CardPlayedOnScale { player_id, card, scale_id, completed } => {
+                assert_eq!(*player_id, 1);
+                assert_eq!(card.value, 1);
+                assert_eq!(*scale_id, 0);
+                assert!(!*completed);
+            }
+            _ => panic!("Expected CardPlayedOnScale"),
+        }
+        match &events[1] {
+            ServerEvent::OpponentUpdate { .. } => {}
+            _ => panic!("Expected OpponentUpdate"),
+        }
+    }
+
+    #[test]
+    fn generate_events_move_to_side() {
+        let mut state = test_game_state();
+        
+        state.apply_move(1, Action::Draw).unwrap();
+        
+        let card = Card { deck: DeckColor::Blue, suit: Suit::Diamonds, value: 10 };
+        let hand_len = state.players[0].hand.len();
+        state.players[0].hand[hand_len - 1] = card.clone();
+
+        let result = state.apply_move(1, Action::MoveToSide { hand_idx: hand_len - 1, stack: 2 }).unwrap();
+        
+        let events = generate_events(
+            &state,
+            &Action::MoveToSide { hand_idx: hand_len - 1, stack: 2 },
+            &result,
+            1,
+            false,
+        );
+        
+        assert_eq!(events.len(), 2);
+        
+        match &events[0] {
+            ServerEvent::CardPlacedOnSide { player_id, card: placed, stack } => {
+                assert_eq!(*player_id, 1);
+                assert_eq!(placed, &card);
+                assert_eq!(*stack, 2);
+            }
+            _ => panic!("Expected CardPlacedOnSide"),
+        }
+        
+        match &events[1] {
+            ServerEvent::OpponentUpdate { .. } => {}
+            _ => panic!("Expected OpponentUpdate"),
+        }
+    }
+
+    #[test]
+    fn generate_events_game_won() {
+        let state = test_game_state();
+        let result = MoveSuccess::GameWon { winner_id: 1 };
+        let events = generate_events(&state, &Action::Draw, &result, 1, false);
+        assert_eq!(events.len(), 2);
+        
+        // The first event is CardDrawn (from the Draw action)
+        assert!(matches!(events[0], ServerEvent::CardDrawn { .. }));
+        
+        // The second event should be GameOver
+        match &events[1] {
+            ServerEvent::GameOver { winner_id, reason } => {
+                assert_eq!(*winner_id, 1);
+                assert_eq!(reason, "All cards cleared");
+            }
+            _ => panic!("Expected GameOver as second event"),
+        }
+    }
+
+    #[test]
+    fn process_action_broadcasts_card_drawn_to_acting_player_only() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx });
+
+        let state = test_game_state();
+        let result = MoveSuccess::Success;
+        let action = Action::Draw;
+
+        process_action(&players, &state, &action, &result, 1);
+
+        let msg = rx.try_recv().unwrap();
+        match msg.event {
+            ServerEvent::CardDrawn { player_id, .. } => assert_eq!(player_id, 1),
+            _ => panic!("Expected CardDrawn"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_action_sends_opponent_update_to_other_player() {
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let mut players = HashMap::new();
+        players.insert(1, PlayerInfo { username: "a".into(), tx: tx1 });
+        players.insert(2, PlayerInfo { username: "b".into(), tx: tx2 });
+
+        let mut state = test_game_state();
+
+        // Prepare the state: draw a card to enter Play phase, then set an Ace in hand
+        state.apply_move(1, Action::Draw).unwrap();
+        let ace = Card { deck: DeckColor::Red, suit: Suit::Hearts, value: 1 };
+        let hand_len = state.players[0].hand.len();
+        state.players[0].hand[hand_len - 1] = ace;
+
+        // Open a scale
+        let result = state.apply_move(1, Action::OpenScale { hand_idx: hand_len - 1 }).unwrap();
+        process_action(&players, &state, &Action::OpenScale { hand_idx: hand_len - 1 }, &result, 1);
+
+        let mut received_p1 = vec![];
+        while let Ok(msg) = rx1.try_recv() { received_p1.push(msg.event); }
+        let mut received_p2 = vec![];
+        while let Ok(msg) = rx2.try_recv() { received_p2.push(msg.event); }
+
+        // Player 1 (acting) receives both CardPlayedOnScale (broadcast) and OpponentUpdate
+        assert_eq!(received_p1.len(), 2);
+        assert!(matches!(received_p1[0], ServerEvent::CardPlayedOnScale { .. }));
+        assert!(matches!(received_p1[1], ServerEvent::OpponentUpdate { .. }));
+
+        // Player 2 (opponent) receives only the broadcast event
+        assert_eq!(received_p2.len(), 1);
+        assert!(matches!(received_p2[0], ServerEvent::CardPlayedOnScale { .. }));
+    }
+}

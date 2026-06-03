@@ -50,7 +50,7 @@ impl RoomHandle {
 
 #[cfg(test)]
 mod unit_tests {
-    use crate::{core::game::card::Card, infrastructure::server_event::ServerEvent};
+    use crate::infrastructure::server_event::ServerEvent;
 
 use super::*;
     use tokio::sync::mpsc;

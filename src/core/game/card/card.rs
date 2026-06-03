@@ -3,7 +3,7 @@ use crate::core::game::deck::DeckColor;
 
 use super::suit::Suit;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Card {
     pub suit: Suit,
     pub value: u8,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::core::game::{actions::{MoveError, MoveSuccess}, card::Card};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Scale {
     pub id:    usize,
     pub cards: Vec<Card>,
@@ -161,7 +161,7 @@ mod tests {
     fn king_can_complete_scale() {
         let mut scale = Scale::new(0);
         for v in 1..=11 {
-            scale.push(card(v));
+            let _ = scale.push(card(v));
         }
         let result = scale.push(card(13));
         assert!(matches!(result, Ok(MoveSuccess::ScalePlaced { completed: true, .. })));

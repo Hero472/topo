@@ -36,7 +36,7 @@ impl ScaleManager {
         if !scale.accepts(&card) {
             return Err(MoveError::DoesNotFit);
         }
-        self.scales[scale_id].push(card);
+        let _ = self.scales[scale_id].push(card);
         let completed = self.scales[scale_id].is_complete();
         Ok(MoveSuccess::ScalePlaced { scale_id, completed })
     }
@@ -49,7 +49,7 @@ impl ScaleManager {
         }
         let scale_id = self.scales.len();
         self.scales.push(Scale::new(scale_id));
-        self.scales[scale_id].push(card);
+        let _ = self.scales[scale_id].push(card);
         Ok(MoveSuccess::ScaleOpened { scale_id })
     }
 
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn place_on_valid_scale_succeeds() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1)); // scale 0 has Ace
+        let _ = mgr.open_scale(card(1)); // scale 0 has Ace
         let result = mgr.place_on_scale(0, card(2));
         assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: 0, completed: false }));
         assert_eq!(mgr.scales[0].cards.len(), 2);
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn place_invalid_card_fails() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1)); // expecting next value 2
+        let _ = mgr.open_scale(card(1)); // expecting next value 2
         assert_eq!(mgr.place_on_scale(0, card(5)), Err(MoveError::DoesNotFit));
         // scale still only has the Ace
         assert_eq!(mgr.scales[0].cards.len(), 1);
@@ -131,8 +131,8 @@ mod tests {
     #[test]
     fn place_on_correct_scale_among_many() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1)); // scale 0: Ace
-        mgr.open_scale(card(1)); // scale 1: Ace
+        let _ = mgr.open_scale(card(1)); // scale 0: Ace
+        let _ = mgr.open_scale(card(1)); // scale 1: Ace
         // Place a 2 on scale 1, not scale 0
         let result = mgr.place_on_scale(1, card(2));
         assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: 1, completed: false }));
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn place_completes_scale_and_flags_completion() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
         // Build up to Jack (1..=11)
         for v in 2..=11 {
             assert_eq!(
@@ -160,9 +160,9 @@ mod tests {
     #[test]
     fn place_on_completed_scale_fails() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
         for v in 2..=12 {
-            mgr.place_on_scale(0, card(v));
+            let _ = mgr.place_on_scale(0, card(v));
         }
         assert!(mgr.scales[0].is_complete());
         // try to place anything
@@ -170,14 +170,14 @@ mod tests {
         assert_eq!(mgr.place_on_scale(0, card(5)), Err(MoveError::DoesNotFit));
     }
 
-    // ---------- King (13) special behaviour ----------
+    // ---------- King (13) special behavior ----------
 
     #[test]
     fn king_wildcard_placed_on_non_empty_scale() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1)); // Ace
+        let _ = mgr.open_scale(card(1)); // Ace
         // Place a 2, then a King as wildcard 3
-        mgr.place_on_scale(0, card(2));
+        let _ = mgr.place_on_scale(0, card(2));
         let result = mgr.place_on_scale(0, card(13)); // should be allowed
         assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: 0, completed: false }));
         // Now the scale expects 4 (since length is 3: Ace,2,King)
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn king_after_ace_allowed() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
         let result = mgr.place_on_scale(0, card(13));
         assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: 0, completed: false }));
     }
@@ -196,8 +196,8 @@ mod tests {
     #[test]
     fn king_after_king_fails() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
-        mgr.place_on_scale(0, card(13)); // ace -> king
+        let _ = mgr.open_scale(card(1));
+        let _ = mgr.place_on_scale(0, card(13)); // ace -> king
         let result = mgr.place_on_scale(0, card(13)); // king after king
         assert_eq!(result, Err(MoveError::DoesNotFit));
     }
@@ -206,9 +206,9 @@ mod tests {
     fn king_cannot_complete_scale_if_already_queen() {
         // Completion is exactly 12 cards. If we place a King as the 12th card, it completes.
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
         for v in 2..=11 {
-            mgr.place_on_scale(0, card(v));
+            let _ = mgr.place_on_scale(0, card(v));
         }
         // place King as 12th card -> completes
         let result = mgr.place_on_scale(0, card(13));
@@ -220,8 +220,8 @@ mod tests {
     #[test]
     fn reset_clears_all_scales() {
         let mut mgr = ScaleManager::new();
-        mgr.open_scale(card(1));
-        mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
+        let _ = mgr.open_scale(card(1));
         assert_eq!(mgr.scales.len(), 2);
         mgr.reset();
         assert!(mgr.scales.is_empty());

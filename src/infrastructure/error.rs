@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     NotYourTurn,
@@ -11,7 +11,7 @@ pub enum ErrorCode {
 }
 
 /// Context that helps the frontend (or devtools) understand the error.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub player_id: Option<usize>,

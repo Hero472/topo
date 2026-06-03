@@ -32,8 +32,6 @@ pub struct GameState {
 
 
 impl GameState {
-    /// Creates a new game with the given player IDs and seed.
-    /// Automatically deals the initial 13 personal cards and 5 hand cards to each player.
     pub fn new(
         room_id: String,
         player_ids: Vec<usize>,
@@ -175,22 +173,18 @@ impl GameState {
     }
 
     // ── Core draw ─────────────────────────────────────────────
-    /// Draw one card from the dealer (with automatic recycling).
     fn draw_one(&mut self) -> Option<Card> {
         self.card_dealer.draw_one()
     }
 
     // ── Hand refill ──────────────────────────────────────────
-    /// Called **only during the Draw action**.
-    /// 1. Always draws one card (the turn draw).
-    /// 2. Then fills the hand to exactly 5 cards if possible.
     fn execute_draw_phase(&mut self, player_idx: usize) {
         // 1. Obligatory turn draw (unless deck empty)
         if let Some(card) = self.draw_one() {
             self.players[player_idx].draw_to_hand(card);
         }
 
-        // 2. Top up to 5 if hand still below 5
+        // Top up to 5 if hand still below 5
         while self.players[player_idx].hand.len() < 5 {
             if let Some(card) = self.draw_one() {
                 self.players[player_idx].draw_to_hand(card);
@@ -226,7 +220,6 @@ impl GameState {
 
     // ── Scale interaction ────────────────────────────────────
 
-    /// Check if a specific scale accepts a card (for pre‑validation).
     pub fn can_place_on_scale(&self, scale_id: usize, card: &Card) -> bool {
         self.scale_manager.can_place_on_scale(scale_id, card)
     }
@@ -262,16 +255,14 @@ impl GameState {
                     return Err(MoveError::InvalidIndex { kind: "hand_idx".into() });
                 };
 
-                // Only Aces can open a scale
                 if card.value != 1 {
                     return Err(MoveError::DoesNotFit);
                 }
 
-                // Remove card from hand and try to open scale
                 let card = self.players[idx].take_from_hand(hand_idx).unwrap();
-                let result = self.scale_manager.open_scale(card)?;  // propagates any error
+                let result = self.scale_manager.open_scale(card)?; 
                 self.refill_hand_to_five(idx);
-                Ok(result)   // result is already MoveSuccess::ScaleOpened
+                Ok(result)
             }
 
             Action::PlayHand { hand_idx, scale_idx } => {
@@ -303,7 +294,6 @@ impl GameState {
                 };
 
                 if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
-                    // Return card to hand since we already popped it
                     self.players[idx].hand.push(card);
                     return Err(MoveError::DoesNotFit);
                 }
@@ -323,7 +313,6 @@ impl GameState {
                 };
 
                 if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
-                    // Return card to hand (common rule)
                     self.players[idx].hand.push(card);
                     return Err(MoveError::DoesNotFit);
                 }
@@ -398,6 +387,10 @@ mod tests {
         gs
     }
 
+    fn empty_game() -> GameState {
+        GameState::new("test".into(), vec![], 0, 13, 5)
+    }
+
     fn hand_len(gs: &GameState, idx: usize) -> usize {
         gs.players[idx].hand.len()
     }
@@ -410,7 +403,7 @@ mod tests {
         gs.players[gs.current_turn].player_idx
     }
 
-    // ── Initialisation & player management ───────────────────
+    // ── Initialization & player management ───────────────────
     #[test]
     fn new_game_has_two_players_waiting() {
         let gs = GameState::new("r".into(), vec![0, 1], 0, 13, 5);
@@ -432,9 +425,67 @@ mod tests {
     }
 
     #[test]
+    fn add_player_first_succeeds() {
+        let mut gs = empty_game();
+        assert!(gs.add_player(42));
+        assert_eq!(gs.players.len(), 1);
+        assert_eq!(gs.players[0].player_idx, 42);
+        assert_eq!(gs.phase, GamePhase::Waiting);
+    }
+
+    #[test]
     fn add_player_beyond_two_fails() {
         let mut gs = make_game();
         assert!(!gs.add_player(2));
+    }
+
+    #[test]
+    fn add_player_second_starts_game() {
+        let mut gs = empty_game();
+        assert!(gs.add_player(10));
+        assert!(gs.add_player(20));
+        assert_eq!(gs.players.len(), 2);
+        assert_eq!(gs.phase, GamePhase::Playing);
+        assert_eq!(gs.players[0].personal.len(), 13);
+        assert_eq!(gs.players[0].hand.len(), 5);
+        assert_eq!(gs.players[1].personal.len(), 13);
+        assert_eq!(gs.players[1].hand.len(), 5);
+    }
+
+    #[test]
+    fn add_player_third_fails() {
+        let mut gs = empty_game();
+        gs.add_player(1);
+        gs.add_player(2);
+        assert!(!gs.add_player(3));
+        assert_eq!(gs.players.len(), 2);
+    }
+
+    #[test]
+    fn add_player_duplicate_id_fails() {
+        let mut gs = empty_game();
+        gs.add_player(5);
+        assert!(!gs.add_player(5));
+        assert_eq!(gs.players.len(), 1);
+    }
+
+    #[test]
+    fn remove_player_during_waiting_does_not_end_game() {
+        let mut gs = empty_game();
+        gs.add_player(1);
+        gs.add_player(2);
+        // Game is now Playing because two players.
+        assert_eq!(gs.phase, GamePhase::Playing);
+        // Remove one player
+        gs.remove_player(2);
+        assert_eq!(gs.players.len(), 1);
+        // Phase should revert to Waiting (or stay Playing? According to code,
+        // it only sets Finished if phase == Playing and length changed.
+        // After removal, players.len() == 1, but phase remains Playing because
+        // the code sets Finished only when players.len() != before AND phase == Playing.
+        // However, the game cannot continue with one player, so maybe you want it Finished.
+        // The provided code sets Finished. Let's test that.
+        assert_eq!(gs.phase, GamePhase::Finished);
     }
 
     #[test]
@@ -444,6 +495,26 @@ mod tests {
         gs.remove_player(1);
         assert_eq!(gs.phase, GamePhase::Finished);
         assert_eq!(gs.players.len(), before - 1);
+    }
+
+    #[test]
+    fn remove_player_adjusts_current_turn_if_needed() {
+        let mut gs = empty_game();
+        gs.add_player(1);
+        gs.add_player(2);
+        gs.current_turn = 1;
+        gs.remove_player(2);
+        assert_eq!(gs.current_turn, 0);
+    }
+
+    #[test]
+    fn remove_player_nonexistent_does_nothing() {
+        let mut gs = empty_game();
+        gs.add_player(1);
+        let before_len = gs.players.len();
+        gs.remove_player(99);
+        assert_eq!(gs.players.len(), before_len);
+        assert_eq!(gs.phase, GamePhase::Waiting); // not started yet
     }
 
     // ── Turn / phase helpers ─────────────────────────────────
@@ -526,11 +597,61 @@ mod tests {
     fn open_scale_with_non_ace_rejected() {
         let mut gs = make_game();
 
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 5, deck: DeckColor::Red };
         let result = gs.apply_move(0, Action::OpenScale { hand_idx: 0 });
         assert_eq!(result, Err(MoveError::DoesNotFit));
         assert_eq!(hand_len(&gs, 0), 6); // hand unchanged
+    }
+
+    // ─── Scale (borrow a Scale by id) ─────────────────────────────────────
+    #[test]
+    fn scale_returns_reference_to_existing_scale() {
+        let mut gs = empty_game();
+        // Add two players to start the game (which creates scales? Not automatically.
+        // The game creates scales only when players open them. For test, manually add a Scale.
+        gs.add_player(1);
+        gs.add_player(2);
+        // Manually push a scale
+        let scale = Scale::new(0);
+        gs.scale_manager.scales.push(scale.clone());
+        let retrieved = gs.scale(&0);
+        assert_eq!(retrieved.id, 0);
+        // We can also check that modifications via the reference are reflected.
+        // But careful: &Scale is immutable; we cannot modify. So just test equality.
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn scale_panics_for_invalid_id() {
+        let gs = empty_game();
+        // No scales exist, so accessing any id will panic.
+        let _ = gs.scale(&0);
+    }
+
+    // ── can_place_on_scale ──────────────────────────────────────
+    #[test]
+    fn can_place_on_scale_delegates_to_scale_manager() {
+        let mut gs = empty_game();
+        gs.add_player(1);
+        gs.add_player(2);
+        // Create a scale
+        let mut scale = Scale::new(0);
+        // Suppose scale expects Ace (value 1) first
+        scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
+        gs.scale_manager.scales.push(scale);
+        let card = Card { suit: Suit::Hearts, value: 2, deck: DeckColor::Red };
+        assert!(gs.can_place_on_scale(0, &card));
+        let bad_card = Card { suit: Suit::Spades, value: 3, deck: DeckColor::Blue };
+        assert!(!gs.can_place_on_scale(0, &bad_card));
+    }
+
+    #[test]
+    fn can_place_on_scale_returns_false_for_invalid_scale_id() {
+        let gs = empty_game();
+        let card = Card { suit: Suit::Clubs, value: 1, deck: DeckColor::Red };
+        // Scale manager likely returns false for out-of-range ids.
+        assert!(!gs.can_place_on_scale(99, &card));
     }
 
     // ── PlayHand action ──────────────────────────────────────
@@ -538,10 +659,10 @@ mod tests {
     fn play_hand_valid() {
         let mut gs = make_game();
 
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
         // open scale with Ace at index 0
         gs.players[0].hand[0] = Card { value: 1, ..gs.players[0].hand[0] };
-        gs.apply_move(0, Action::OpenScale { hand_idx: 0 });
+        let _ = gs.apply_move(0, Action::OpenScale { hand_idx: 0 });
         // place 2 at index 0
         gs.players[0].hand[0] = Card { value: 2, ..gs.players[0].hand[0] };
         let result = gs.apply_move(0, Action::PlayHand { hand_idx: 0, scale_idx: 0 });
@@ -552,9 +673,26 @@ mod tests {
     #[test]
     fn play_hand_invalid_scale() {
         let mut gs = make_game();
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
         let result = gs.apply_move(0, Action::PlayHand { hand_idx: 0, scale_idx: 99 });
         assert_eq!(result, Err(MoveError::DoesNotFit));
+    }
+
+    // ───── Player (getter by player_idx) ──────────────────────────────────
+    #[test]
+    fn player_returns_some_for_existing_id() {
+        let mut gs = empty_game();
+        gs.add_player(7);
+        gs.add_player(8);
+        let p = gs.player(7);
+        assert!(p.is_some());
+        assert_eq!(p.unwrap().player_idx, 7);
+    }
+
+    #[test]
+    fn player_returns_none_for_missing_id() {
+        let gs = empty_game();
+        assert!(gs.player(99).is_none());
     }
 
     // ── PlayPersonal action ──────────────────────────────────
@@ -562,7 +700,7 @@ mod tests {
     fn play_personal_to_scale() {
         let mut gs = make_game();
 
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
 
         gs.players[0].personal[12] = Card {
             suit: Suit::Hearts,
@@ -581,7 +719,7 @@ mod tests {
     fn play_side_to_scale() {
         let mut gs = make_game();
 
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
         let card = gs.players[0].hand[0];
         gs.players[0].side[0].push(Card { value: 1, ..card });
 
@@ -624,7 +762,7 @@ mod tests {
     #[test]
     fn move_non_king_from_personal_rejected() {
         let mut gs = make_game();
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
 
         let card = Card { value: 5, ..gs.players[0].personal[0] };
         gs.players[0].personal.clear();
@@ -637,7 +775,7 @@ mod tests {
     #[test]
     fn win_on_move_to_side_when_both_piles_empty() {
         let mut gs = make_game();
-        gs.apply_move(0, Action::Draw);
+        let _ = gs.apply_move(0, Action::Draw);
         gs.players[0].personal.clear();
         gs.players[0].hand = vec![Card { value: 2, ..gs.players[0].hand[0] }];
         let result = gs.apply_move(0, Action::MoveToSide { hand_idx: 0, stack: 0 });

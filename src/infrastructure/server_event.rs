@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::{core::game::{card::Card, deck::DeckColor, scale::Scale}, infrastructure::{error::{ErrorCode, ErrorDetails}, views::PlayerBoardView}};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
     // ── Lobby ──
@@ -79,7 +79,7 @@ pub enum ServerEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OpponentView {
     pub player_idx: usize,
     pub username: String,

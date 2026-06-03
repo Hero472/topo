@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
 
-/// Successful outcomes of a move.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MoveSuccess {
@@ -17,7 +16,6 @@ impl MoveSuccess {
     }
 }
 
-/// Domain‑level reasons a move failed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MoveError {
