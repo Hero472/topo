@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
 
+use crate::core::player::PlayerId;
 use crate::infrastructure::room::player_info::PlayerInfo;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::core::game::state::GameState;
@@ -20,9 +21,9 @@ pub trait RoomPhase {
     async fn handle_command(
         &mut self,
         cmd: RoomCommand,
-        players: &mut HashMap<usize, PlayerInfo>,
+        players: &mut HashMap<PlayerId, PlayerInfo>,
         state: &mut Option<GameState>,
         timer: &mut Option<CancellationToken>,
         cmd_tx: &mpsc::UnboundedSender<RoomCommand>,
-    ) -> Option<Box<dyn RoomPhase>>;
+    ) -> Option<Box<dyn RoomPhase + Send>>;
 }

@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     core::{
-        game::{actions::{Action, MoveSuccess}, state::GameState},
+        game::{actions::{Action, MoveSuccess}, state::{GameState, Seconds}},
         player::{PlayerId, PlayerIdx}
     }, 
     infrastructure::{
@@ -217,7 +217,7 @@ fn opponent_update(
 
 pub fn start_timer(
     player_id: PlayerId,
-    seconds: u64,
+    seconds: Seconds,
     current_cancel: &mut Option<CancellationToken>,
     tx: &mpsc::UnboundedSender<RoomCommand>,
 ) {
@@ -231,7 +231,7 @@ pub fn start_timer(
     let tx = tx.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = sleep(Duration::from_secs(seconds)) => {
+            _ = sleep(Duration::from_secs(seconds.0)) => {
                 let _ = tx.send(RoomCommand::TurnTimeout { player_id });
             }
             _ = token.cancelled() => {}

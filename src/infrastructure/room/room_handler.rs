@@ -22,7 +22,7 @@ impl RoomHandle {
         let actor_tx = cmd_tx.clone();
         let handle = Arc::new(Self { cmd_tx: cmd_tx.clone() });
 
-        tokio::spawn(room_actor(room_id, turn_seconds.0, cmd_rx, actor_tx));
+        tokio::spawn(room_actor(room_id, turn_seconds, cmd_rx, actor_tx));
         handle
     }
 

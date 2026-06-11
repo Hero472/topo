@@ -105,6 +105,9 @@ impl GameState {
         if self.players.len() >= 2 {
             return false;
         }
+        if self.players.iter().any(|p| p.player_id == Some(player_id)) {
+            return false;
+        }
         if self.players.iter().any(|p| p.player_idx == player_idx) {
             return false;
         }
@@ -430,8 +433,11 @@ mod tests {
         gs
     }
 
-    fn empty_game() -> GameState {
-        GameState::new("test".into(), Seed(0), 13, 5)
+    fn empty_game_for_lobby() -> GameState {
+        let mut gs = GameState::new("test".into(), Seed(0), 13, 5);
+        gs.players.clear();
+        gs.phase = GamePhase::Waiting;
+        gs
     }
 
     fn hand_len(gs: &GameState, idx: usize) -> usize {
@@ -471,8 +477,8 @@ mod tests {
 
     #[test]
     fn add_player_first_succeeds() {
-        let mut gs = empty_game();
-        // Use a custom PlayerIdx (42) for the test, PlayerId placeholder.
+        let mut gs = empty_game_for_lobby();
+
         assert!(gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(42)));
         assert_eq!(gs.players.len(), 1);
         assert_eq!(gs.players[0].player_idx, PlayerIdx(42));
@@ -487,9 +493,11 @@ mod tests {
 
     #[test]
     fn add_player_second_starts_game() {
-        let mut gs = empty_game();
-        assert!(gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0)));
-        assert!(gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1)));
+        let mut gs = empty_game_for_lobby();
+        let id0 = PlayerId(Uuid::from_u128(100));
+        let id1 = PlayerId(Uuid::from_u128(200));
+        assert!(gs.add_player(id0, PlayerIdx(0)));
+        assert!(gs.add_player(id1, PlayerIdx(1)));
         assert_eq!(gs.players.len(), 2);
         assert_eq!(gs.phase, GamePhase::Playing);
         assert_eq!(gs.players[0].personal.len(), 13);
@@ -500,30 +508,64 @@ mod tests {
 
     #[test]
     fn add_player_third_fails() {
-        let mut gs = empty_game();
-        gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
-        gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
-        assert!(!gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(2)));
+        let mut gs = empty_game_for_lobby();
+        let id0 = PlayerId(Uuid::from_u128(100));
+        let id1 = PlayerId(Uuid::from_u128(200));
+        let id2 = PlayerId(Uuid::from_u128(300));
+        gs.add_player(id0, PlayerIdx(0));
+        gs.add_player(id1, PlayerIdx(1));
+        assert!(!gs.add_player(id2, PlayerIdx(2)));
         assert_eq!(gs.players.len(), 2);
     }
 
     #[test]
     fn add_player_duplicate_id_fails() {
-        let mut gs = empty_game();
-        gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(5));
+        let mut gs = empty_game_for_lobby();
+        // Start with an empty board for this test
+        gs.players.clear();
+        gs.phase = GamePhase::Waiting;
+
+        let player_id = PlayerId(Uuid::new_v4());
+        assert!(gs.add_player(player_id, PlayerIdx(0)));
+        assert_eq!(gs.players.len(), 1);
+
+        // Try adding the same external ID again – must fail
+        assert!(!gs.add_player(player_id, PlayerIdx(1)));
+        assert_eq!(gs.players.len(), 1);
+    }
+
+    #[test]
+    fn add_player_duplicate_idx_fails() {
+        let mut gs = empty_game_for_lobby();
+
+        // Start with 0 players for this test
+        gs.players.clear();
+        gs.phase = GamePhase::Waiting;
+
+        // Add first player with a custom PlayerIdx
+        assert!(gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(5)));
+        assert_eq!(gs.players.len(), 1);
+
+        // Attempt to add another player with the *same* PlayerIdx → must fail
         assert!(!gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(5)));
         assert_eq!(gs.players.len(), 1);
     }
 
     #[test]
-    fn remove_player_during_waiting_does_not_end_game() {
-        let mut gs = empty_game();
-        gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
-        gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
-        assert_eq!(gs.phase, GamePhase::Playing);
+    fn remove_player_during_play_ends_game() {
+        let mut gs = empty_game_for_lobby();
+
+        // Use two different external IDs
+        let id0 = PlayerId(Uuid::from_u128(100));
+        let id1 = PlayerId(Uuid::from_u128(200));
+
+        assert!(gs.add_player(id0, PlayerIdx(0)));
+        assert!(gs.add_player(id1, PlayerIdx(1)));
+        assert_eq!(gs.phase, GamePhase::Playing);   // game has started
+
+        // Remove one player – game should finish
         gs.remove_player(PlayerIdx(1));
         assert_eq!(gs.players.len(), 1);
-        // According to the current code, it sets Finished if phase == Playing and len changed.
         assert_eq!(gs.phase, GamePhase::Finished);
     }
 
@@ -538,7 +580,7 @@ mod tests {
 
     #[test]
     fn remove_player_adjusts_current_turn_if_needed() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
         gs.current_turn = PlayerIdx(1);
@@ -548,7 +590,7 @@ mod tests {
 
     #[test]
     fn remove_player_nonexistent_does_nothing() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         let before_len = gs.players.len();
         gs.remove_player(PlayerIdx(99));
@@ -630,7 +672,7 @@ mod tests {
     // ─── Scale (borrow a Scale by id) ─────────────────────────────────────
     #[test]
     fn scale_returns_reference_to_existing_scale() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
         let scale = Scale::new(ScaleIdx(0));
@@ -642,14 +684,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "index out of bounds")]
     fn scale_panics_for_invalid_id() {
-        let gs = empty_game();
+        let gs = empty_game_for_lobby();
         let _ = gs.scale(ScaleIdx(0));
     }
 
     // ── can_place_on_scale ──────────────────────────────────────
     #[test]
     fn can_place_on_scale_delegates_to_scale_manager() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
         let mut scale = Scale::new(ScaleIdx(0));
@@ -663,7 +705,7 @@ mod tests {
 
     #[test]
     fn can_place_on_scale_returns_false_for_invalid_scale_id() {
-        let gs = empty_game();
+        let gs = empty_game_for_lobby();
         let card = Card { suit: Suit::Clubs, value: 1, deck: DeckColor::Red };
         assert!(!gs.can_place_on_scale(ScaleIdx(99), &card));
     }
@@ -692,7 +734,7 @@ mod tests {
     // ───── Player (getter by player_idx) ──────────────────────────────────
     #[test]
     fn player_returns_some_for_existing_id() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(7));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(8));
         let p = gs.player(PlayerIdx(7));
@@ -702,7 +744,7 @@ mod tests {
 
     #[test]
     fn player_returns_none_for_missing_id() {
-        let gs = empty_game();
+        let gs = empty_game_for_lobby();
         assert!(gs.player(PlayerIdx(99)).is_none());
     }
 
@@ -843,7 +885,7 @@ mod tests {
 
     #[test]
     fn current_player_id_none_if_no_players() {
-        let mut gs = empty_game();
+        let mut gs = empty_game_for_lobby();
         gs.remove_player(PlayerIdx(1));
         gs.remove_player(PlayerIdx(0));
         assert!(gs.current_player_idx().is_none());

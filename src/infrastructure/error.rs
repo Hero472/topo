@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::core::player::PlayerId;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -14,7 +16,7 @@ pub enum ErrorCode {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub player_id: Option<usize>,
+    pub player_id: Option<PlayerId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,       // JSON string of the attempted action
     #[serde(skip_serializing_if = "Option::is_none")]

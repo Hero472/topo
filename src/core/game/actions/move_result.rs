@@ -112,7 +112,7 @@ mod tests {
         let deserialized: MoveSuccess = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);
         assert!(json.contains(r#""type":"game_won""#));
-        assert!(json.contains(r#""winner_id":7"#));
+        assert!(json.contains(r#""winner_idx":0"#));
     }
 
     // -------------------------------------------------------------------------

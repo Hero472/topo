@@ -77,7 +77,7 @@ pub enum ServerEvent {
     TurnEnded {
         next_player_id: PlayerId,
         next_player_idx: PlayerIdx,
-        turn_seconds: u64,
+        turn_seconds: Seconds,
         timed_out_player_id: Option<PlayerId>,
         timed_out_player_idx: Option<PlayerIdx>,
     },
