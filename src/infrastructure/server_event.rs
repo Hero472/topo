@@ -100,6 +100,16 @@ pub enum ServerEvent {
         turn_seconds_remaining: Seconds,
     },
 
+    PlayerDisconnected {
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
+    },
+
+    PlayerReconnected {
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
+    },
+
     Error {
         code: ErrorCode,
         message: Option<String>,

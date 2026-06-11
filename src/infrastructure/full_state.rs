@@ -63,11 +63,6 @@ pub fn build_full_state(
         .map(|p| p.player_idx)
         .unwrap_or(PlayerIdx(0)) == player_idx;
 
-    println!(
-        "[FULL_STATE] player_idx={:?}, current_turn={:?}, your_turn={:?}",
-        player_idx, game_state.current_turn, your_turn
-    );
-
     Some(ServerEvent::FullState {
         your_board: your_board_view,
         your_turn: game_state

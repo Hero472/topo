@@ -18,9 +18,15 @@ mongodb = "3.5.2"
 dotenvy = "0.15.7"
 env_logger = "0.11.9"
 log = "0.4"
+test-log = "0.2"
 futures-util = "0.3.32"
 actix-cors = "0.7"
 async-trait = "0.1"
+
+[dev-dependencies]
+actix-rt = "2"
+actix-test = "0.1"   # optional, provides test helpers
+awc = "3"
 
 [lib]
 name = "topo"

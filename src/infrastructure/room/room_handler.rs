@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use mongodb::action::Shutdown;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::SendError;
 use crate::core::game::state::Seconds;
@@ -17,12 +18,16 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn new_arc(room_id: String, turn_seconds: Seconds) -> Arc<Self> {
+    pub fn new_arc(
+        room_id: String,
+        turn_seconds: Seconds,
+        shutdown_tx: mpsc::UnboundedSender<String>,
+    ) -> Arc<Self> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let actor_tx = cmd_tx.clone();
         let handle = Arc::new(Self { cmd_tx: cmd_tx.clone() });
 
-        tokio::spawn(room_actor(room_id, turn_seconds, cmd_rx, actor_tx));
+        tokio::spawn(room_actor(room_id, turn_seconds, cmd_rx, actor_tx, shutdown_tx));
         handle
     }
 

@@ -24,7 +24,6 @@ pub async fn ws_handler(
     path: web::Path<String>,
     query: web::Query<WsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
-
     let room_id = path.into_inner();
 
     let player_uuid = Uuid::parse_str(&query.player_id)
@@ -33,60 +32,65 @@ pub async fn ws_handler(
 
     let username = query.username.as_deref().unwrap_or("Anonymous").to_string();
 
-    println!("ws_handler room={}, player={:?}, username={}", room_id, player_id, username);
+    log::info!("ws_handler room={}, player={:?}, username={}", room_id, player_id, username);
 
+    // Get or create the room (with default 60s turn time – could be configurable later)
     let room = {
         let mut rooms = state.rooms.lock().unwrap();
         rooms
             .entry(room_id.clone())
             .or_insert_with(|| {
-                // Default turn time of 60 seconds
-                RoomHandle::new_arc(room_id.clone(), Seconds(60))
+                RoomHandle::new_arc(
+                    room_id.clone(),
+                    Seconds(60),
+                    state.room_shutdown_tx.clone(),
+                )
             })
             .clone()
     };
 
+    // Subscribe to events BEFORE adding the player so we don't miss any.
     let mut event_rx = room.subscribe_player(player_id);
 
-    let _ = room.add_player(player_id, username);
+    // Add player to the room; this will broadcast PlayerJoined etc.
+    if let Err(e) = room.add_player(player_id, username) {
+        log::error!("Failed to add player to room: {:?}", e);
+        return Err(actix_web::error::ErrorInternalServerError("Could not join room"));
+    }
 
-    let (response, session, msg_stream) = match actix_ws::handle(&req, body) {
-        Ok(tuple) => {
-            println!("WebSocket upgrade succeeded");
-            tuple
-        }
-        Err(e) => {
-            eprintln!("WebSocket upgrade FAILED: {e}");
-            return Err(e);
-        }
-    };
+    let (response, mut session, mut msg_stream) = actix_ws::handle(&req, body)
+        .map_err(|e| {
+            log::error!("WebSocket upgrade failed: {}", e);
+            e
+        })?;
 
     let room_clone = room.clone();
-    let state_clone = state.clone();
-    let room_id_clone = room_id.clone();
 
     actix_rt::spawn(async move {
-        println!("🚀 spawn task started for player {:?}", player_id);
-        let mut session = session;
-        let mut msg_stream = msg_stream;
+        log::debug!("Spawned WebSocket task for player {:?}", player_id);
 
         loop {
-            select! {
+            tokio::select! {
                 maybe_event = event_rx.recv() => {
                     match maybe_event {
                         Some(game_msg) => {
                             let json = match serde_json::to_string(&game_msg.event) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    eprintln!("Serialization error: {e}");
-                                    break;
+                                    log::error!("Serialization error: {}", e);
+                                    // Skip this event; don't break the connection
+                                    continue;
                                 }
                             };
                             if session.text(json).await.is_err() {
+                                // Client disconnected
                                 break;
                             }
                         }
-                        None => break,
+                        None => {
+                            // Server closed the channel – room is shutting down
+                            break;
+                        }
                     }
                 }
 
@@ -94,10 +98,26 @@ pub async fn ws_handler(
                     match maybe_msg {
                         Some(Ok(msg)) => match msg {
                             Message::Text(text) => {
-                                if let Ok(action) = serde_json::from_str::<Action>(&text) {
-                                    if room_clone.apply_action(player_id, action).is_err() {
-                                        eprintln!("Failed to apply action");
-                                        break;
+                                match serde_json::from_str::<Action>(&text) {
+                                    Ok(action) => {
+                                        if let Err(e) = room_clone.apply_action(player_id, action) {
+                                            log::warn!("Failed to apply action: {:?}", e);
+                                            // Send error back to client
+                                            let err = serde_json::json!({
+                                                "error": "invalid_move",
+                                                "details": format!("{:?}", e)
+                                            });
+                                            let _ = session.text(err.to_string()).await;
+                                            // Don't break; client can try again
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Invalid JSON – notify client
+                                        let err = serde_json::json!({
+                                            "error": "invalid_action",
+                                            "details": e.to_string()
+                                        });
+                                        let _ = session.text(err.to_string()).await;
                                     }
                                 }
                             }
@@ -105,7 +125,7 @@ pub async fn ws_handler(
                             _ => {}
                         },
                         Some(Err(e)) => {
-                            eprintln!("WS receive error: {e}");
+                            log::error!("WebSocket receive error: {}", e);
                             break;
                         }
                         None => break,
@@ -114,12 +134,14 @@ pub async fn ws_handler(
             }
         }
 
-        // Cleanup on disconnect
+        // Player disconnected or WebSocket closed – tell the room
+        log::info!("Player {:?} disconnected, cleaning up", player_id);
         let _ = room_clone.remove_player(player_id);
-        if let Ok(mut rooms) = state_clone.rooms.lock() {
-            rooms.remove(&room_id_clone);
-        }
-        println!("WebSocket task ended for player {:?}", player_id);
+
+        // NOTE: Do NOT remove the room from the global map here.
+        // That's the room actor's responsibility. The room may still be alive
+        // with other players. When the room becomes empty, the actor should
+        // eventually shut itself down and unregister from the map.
     });
 
     Ok(response)

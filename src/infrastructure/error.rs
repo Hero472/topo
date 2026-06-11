@@ -10,6 +10,7 @@ pub enum ErrorCode {
     CardNotFound,
     StackFull,
     GameNotStarted,
+    GameOver
 }
 
 /// Context that helps the frontend (or devtools) understand the error.

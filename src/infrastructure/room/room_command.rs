@@ -30,4 +30,15 @@ pub enum RoomCommand {
         player_id: PlayerId,
         action: Action,
     },
+
+    PlayerReconnected {
+        player_id: PlayerId,
+        sender: mpsc::UnboundedSender<GameMessage>,
+    },
+
+    DisconnectTimeout {
+        player_id: PlayerId,
+    },
+
+    Shutdown
 }

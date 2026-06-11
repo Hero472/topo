@@ -46,6 +46,7 @@ impl RoomPhase for LobbyPhase {
                     username: String::new(),
                     tx: sender,
                     player_idx: PlayerIdx(usize::MAX), // placeholder, will be set on join
+                    connected: false
                 });
                 None
             }
@@ -59,8 +60,14 @@ impl RoomPhase for LobbyPhase {
                     }
                 };
 
+                if info.player_idx != PlayerIdx(usize::MAX) {
+                    warn!("Duplicate PlayerJoined for {:?} - ignored", player_id);
+                    return None;
+                }
+
                 let idx = self.next_player_idx;
                 info.player_idx = idx;
+                info.connected = true;
                 self.next_player_idx.0 += 1;
 
                 info.username = username.clone();
@@ -74,7 +81,7 @@ impl RoomPhase for LobbyPhase {
                     },
                 );
 
-                if players.len() == 2 {
+                if self.next_player_idx == PlayerIdx(2) {
                     let mut new_state = GameState::new(
                         self.room_id.clone(),
                         Seed(rand::rng().random::<u64>()),
@@ -127,6 +134,7 @@ impl RoomPhase for LobbyPhase {
                     return Some(Box::new(PlayingPhase {
                         room_id: self.room_id.clone(),
                         turn_seconds: self.turn_seconds,
+                        disconnect_token: None,
                         current_player: starter_idx,
                         id_to_idx,
                         idx_to_id,
@@ -137,18 +145,18 @@ impl RoomPhase for LobbyPhase {
             }
 
             RoomCommand::PlayerLeft { player_id } => {
-                let idx = players
-                    .get(&player_id)
-                    .map(|info| info.player_idx)
-                    .unwrap_or(PlayerIdx(usize::MAX));
-                players.remove(&player_id);
-                broadcast(
-                    players,
-                    &ServerEvent::PlayerLeft {
-                        player_id,
-                        player_idx: idx,
-                    },
-                );
+                if let Some(info) = players.remove(&player_id) {
+                        broadcast(
+                        players,
+                        &ServerEvent::PlayerLeft {
+                            player_id,
+                            player_idx: info.player_idx,
+                        },
+                    );
+                }
+                if players.is_empty() {
+                    return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())));
+                }
                 None
             }
 

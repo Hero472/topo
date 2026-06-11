@@ -5,5 +5,6 @@ use crate::{core::player::PlayerIdx, infrastructure::message::GameMessage};
 pub struct PlayerInfo {
     pub username: String,
     pub tx: mpsc::UnboundedSender<GameMessage>,
-    pub player_idx: PlayerIdx
+    pub player_idx: PlayerIdx,
+    pub connected: bool
 }
