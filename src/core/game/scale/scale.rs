@@ -9,7 +9,7 @@ use crate::core::{
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Scale {
-    pub scale_idx:    ScaleIdx,
+    pub scale_idx: ScaleIdx,
     pub cards: Vec<Card>,
 }
 

@@ -2,7 +2,6 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_ws::Message;
 use futures_util::StreamExt;
 use serde::Deserialize;
-use tokio::select;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -34,7 +33,6 @@ pub async fn ws_handler(
 
     log::info!("ws_handler room={}, player={:?}, username={}", room_id, player_id, username);
 
-    // Get or create the room (with default 60s turn time – could be configurable later)
     let room = {
         let mut rooms = state.rooms.lock().unwrap();
         rooms
