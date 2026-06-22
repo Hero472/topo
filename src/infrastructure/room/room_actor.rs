@@ -40,7 +40,8 @@ pub async fn room_actor(
 mod tests {
     use super::*;
     use crate::core::game::actions::Action;
-    use crate::core::game_index::{HandIdx, StackIdx};
+    use crate::core::game::state::state_types::Seed;
+use crate::core::game_index::{HandIdx, StackIdx};
 use crate::infrastructure::error::ErrorCode;
     use crate::core::player::{PlayerId, PlayerIdx};
     use crate::infrastructure::message::GameMessage;
@@ -52,6 +53,7 @@ use crate::infrastructure::error::ErrorCode;
     fn id(val: u128) -> PlayerId {
         PlayerId(Uuid::from_u128(val))
     }
+
 
     async fn setup_actor(
         room_id: &str,
@@ -850,4 +852,196 @@ use crate::infrastructure::error::ErrorCode;
         .await
         .expect("Timed out waiting for TurnEnded")
     }
+
+    #[tokio::test]
+    async fn move_to_side_ends_turn() {
+        let player1 = id(1);
+        let player2 = id(2);
+        let (cmd_tx, mut rx1, mut rx2) =
+            setup_actor("test_room", Seconds(60), player1, player2).await;
+
+        cmd_tx.send(RoomCommand::PlayerJoined {
+            player_id: player1,
+            username: "Alice".into(),
+        })
+        .unwrap();
+        cmd_tx.send(RoomCommand::PlayerJoined {
+            player_id: player2,
+            username: "Bob".into(),
+        })
+        .unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        drain(&mut rx1).await;
+        drain(&mut rx2).await;
+
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player1,
+            action: Action::Draw,
+        })
+        .unwrap();
+        sleep(Duration::from_millis(10)).await;
+        drain(&mut rx1).await;
+
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player1,
+            action: Action::MoveToSide {
+                hand_idx: HandIdx(0),
+                stack_idx: StackIdx(0),
+            },
+        })
+        .unwrap();
+        sleep(Duration::from_millis(50)).await;
+
+        let msgs1 = drain(&mut rx1).await;
+        let msgs2 = drain(&mut rx2).await;
+
+        let p1_turn_ended = msgs1
+            .iter()
+            .any(|m| matches!(&m.event, ServerEvent::TurnEnded { .. }));
+        let p2_turn_ended = msgs2
+            .iter()
+            .any(|m| matches!(&m.event, ServerEvent::TurnEnded { .. }));
+
+        assert!(p1_turn_ended, "Player1 should receive TurnEnded if MoveToSide ends the turn");
+        assert!(p2_turn_ended, "Player2 should receive TurnEnded if MoveToSide ends the turn");
+
+        assert!(
+            msgs1.iter().any(|m| matches!(m.event, ServerEvent::FullState { .. })),
+            "FullState expected after turn transition"
+        );
+
+        if !p1_turn_ended {
+            cmd_tx.send(RoomCommand::PlayerAction {
+                player_id: player1,
+                action: Action::Draw,
+            })
+            .unwrap();
+            sleep(Duration::from_millis(10)).await;
+            let extra = drain(&mut rx1).await;
+            assert!(
+                extra.iter().any(|m| matches!(m.event, ServerEvent::CardDrawn { .. })),
+                "If turn didn't end, another draw should succeed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_game() {
+        let player1 = id(1);
+        let player2 = id(2);
+        let (cmd_tx, mut rx1, mut rx2) =
+            setup_actor("test_room", Seconds(60), player1, player2).await;
+
+        cmd_tx.send(RoomCommand::PlayerJoined {
+            player_id: player1,
+            username: "Alice".into(),
+        })
+        .unwrap();
+        cmd_tx.send(RoomCommand::PlayerJoined {
+            player_id: player2,
+            username: "Bob".into(),
+        })
+        .unwrap();
+        sleep(Duration::from_millis(10)).await;
+
+        drain(&mut rx1).await;
+        drain(&mut rx2).await;
+    }
+
+    #[tokio::test]
+    async fn partial_game_with_seed() {
+        let player1 = id(1);
+        let player2 = id(2);
+        let (cmd_tx, mut rx1, mut rx2) =
+            setup_actor("seed_room", Seconds(60), player1, player2).await;
+
+        let seed = Seed(42);
+
+        cmd_tx.send(RoomCommand::SetSeed(seed)).unwrap();
+
+        cmd_tx.send(RoomCommand::PlayerJoined { player_id: player1, username: "Alice".into() }).unwrap();
+        cmd_tx.send(RoomCommand::PlayerJoined { player_id: player2, username: "Bob".into() }).unwrap();
+
+        sleep(Duration::from_millis(20)).await;
+        let initial_events1 = drain(&mut rx1).await;
+        let initial_events2 = drain(&mut rx2).await;
+
+        let full_state1 = initial_events1.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at game start");
+
+        let full_state2 = initial_events2.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at game start");
+
+        println!("=== FULL STATE ===");
+        println!("Player 1: {:#?}", full_state1);
+        println!("Player 2: {:#?}", full_state2);
+
+        // ---- Turn 1: Player 1 ----
+        // 1) Draw (mandatory)
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player1,
+            action: Action::Draw,
+        }).unwrap();
+        sleep(Duration::from_millis(30)).await;
+
+        let draw_events = drain(&mut rx1).await;
+
+        let card_drawn = draw_events.iter().find_map(|m| {
+            if let ServerEvent::CardDrawn { card, .. } = &m.event {
+                Some(card.clone())
+            } else { None }
+        }).expect("CardDrawn event expected after draw");
+        println!("Drew card: {:?}", card_drawn.unwrap().value);
+
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player1,
+            action: Action::OpenScale { hand_idx: HandIdx(2) },
+        }).unwrap();
+        sleep(Duration::from_millis(30)).await;
+
+        // end of turn 1
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player1,
+            action: Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(3) },
+        }).unwrap();
+        sleep(Duration::from_millis(30)).await;
+
+        // ---- Turn Ended ----
+
+        let end_events1 = drain(&mut rx1).await;
+        let end_events2 = drain(&mut rx2).await;
+
+        println!("--- Player 1 events after move ---");
+        for msg in &end_events1 {
+            println!("  {:?}", msg.event);
+        }
+        println!("--- Player 2 events after move ---");
+        for msg in &end_events2 {
+            println!("  {:?}", msg.event);
+        }
+
+        assert!(
+            end_events1.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })),
+            "Player 1 should see TurnEnded"
+        );
+        assert!(
+            end_events2.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { .. })),
+            "Player 2 should see TurnEnded"
+        );
+
+        // ---- Turn 2: Player 2 ----
+
+    }
+
 }

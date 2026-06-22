@@ -15,6 +15,7 @@ pub struct LobbyPhase {
     pub room_id: String,
     pub turn_seconds: Seconds,
     next_player_idx: PlayerIdx,
+    seed: Option<Seed>
 }
 
 impl LobbyPhase {
@@ -23,6 +24,7 @@ impl LobbyPhase {
             room_id,
             turn_seconds,
             next_player_idx: PlayerIdx(0),
+            seed: None
         }
     }
 }
@@ -82,9 +84,11 @@ impl RoomPhase for LobbyPhase {
                 );
 
                 if self.next_player_idx == PlayerIdx(2) {
+                    let seed = self.seed.unwrap_or_else(|| Seed(rand::rng().random::<u64>()));
+
                     let mut new_state = GameState::new(
                         self.room_id.clone(),
-                        Seed(rand::rng().random::<u64>()),
+                        seed,
                         13,
                         5,
                     );
@@ -157,6 +161,11 @@ impl RoomPhase for LobbyPhase {
                 if players.is_empty() {
                     return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())));
                 }
+                None
+            },
+
+            RoomCommand::SetSeed(s) => {
+                self.seed = Some(s);
                 None
             }
 

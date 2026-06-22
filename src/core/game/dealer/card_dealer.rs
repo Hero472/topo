@@ -78,7 +78,7 @@ impl CardDealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::game::{card::{Card, Suit}, deck::DeckColor};
+    use crate::{core::game::{card::{Card, Suit}, deck::DeckColor}, models::users};
 
     fn test_card(value: u8) -> Card {
         Card {
@@ -266,4 +266,5 @@ mod tests {
         let cards2: Vec<_> = (0..10).map(|_| dealer2.draw_one().unwrap()).collect();
         assert_ne!(cards1, cards2);
     }
+
 }

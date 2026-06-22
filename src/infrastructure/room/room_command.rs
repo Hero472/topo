@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::{core::{game::actions::Action, player::PlayerId}, infrastructure::message::GameMessage};
+use crate::{core::{game::{actions::Action, state::state_types::Seed}, player::PlayerId}, infrastructure::message::GameMessage};
 
 #[derive(Debug)]
 pub enum RoomCommand {
@@ -40,5 +40,7 @@ pub enum RoomCommand {
         player_id: PlayerId,
     },
 
-    Shutdown
+    Shutdown,
+
+    SetSeed(Seed)
 }
