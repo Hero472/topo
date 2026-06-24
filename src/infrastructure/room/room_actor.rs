@@ -964,28 +964,10 @@ use crate::infrastructure::error::ErrorCode;
         cmd_tx.send(RoomCommand::PlayerJoined { player_id: player2, username: "Bob".into() }).unwrap();
 
         sleep(Duration::from_millis(20)).await;
-        let initial_events1 = drain(&mut rx1).await;
-        let initial_events2 = drain(&mut rx2).await;
 
-        let full_state1 = initial_events1.iter().find_map(|m| {
-            if let ServerEvent::FullState { .. } = &m.event {
-                Some(&m.event)
-            } else {
-                None
-            }
-        }).expect("Expected a FullState event at game start");
-
-        let full_state2 = initial_events2.iter().find_map(|m| {
-            if let ServerEvent::FullState { .. } = &m.event {
-                Some(&m.event)
-            } else {
-                None
-            }
-        }).expect("Expected a FullState event at game start");
-
-        println!("=== FULL STATE ===");
-        println!("Player 1: {:#?}", full_state1);
-        println!("Player 2: {:#?}", full_state2);
+        // initital events, dismiss
+        let _ = drain(&mut rx1).await;
+        let _ = drain(&mut rx2).await;
 
         // ---- Turn 1: Player 1 ----
         // 1) Draw (mandatory)
@@ -1002,7 +984,6 @@ use crate::infrastructure::error::ErrorCode;
                 Some(card.clone())
             } else { None }
         }).expect("CardDrawn event expected after draw");
-        println!("Drew card: {:?}", card_drawn.unwrap().value);
 
         cmd_tx.send(RoomCommand::PlayerAction {
             player_id: player1,
@@ -1022,13 +1003,15 @@ use crate::infrastructure::error::ErrorCode;
         let end_events1 = drain(&mut rx1).await;
         let end_events2 = drain(&mut rx2).await;
 
-        println!("--- Player 1 events after move ---");
+        println!("--- Player 1 events after move 1 ---");
         for msg in &end_events1 {
             println!("  {:?}", msg.event);
+            println!();
         }
-        println!("--- Player 2 events after move ---");
+        println!("--- Player 2 events after move 1 ---");
         for msg in &end_events2 {
             println!("  {:?}", msg.event);
+            println!();
         }
 
         assert!(
@@ -1036,11 +1019,36 @@ use crate::infrastructure::error::ErrorCode;
             "Player 1 should see TurnEnded"
         );
         assert!(
-            end_events2.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { .. })),
+            end_events2.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })),
             "Player 2 should see TurnEnded"
         );
 
+        let events1 = drain(&mut rx1).await;
+        let events2 = drain(&mut rx2).await;
+
+        let full_state1 = events1.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at end turn");
+
+        let full_state2 = events2.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at end turn");
+
+        println!("=== FULL STATE ===");
+        println!("Player 1: {:#?}", full_state1);
+        println!("Player 2: {:#?}", full_state2);
+
         // ---- Turn 2: Player 2 ----
+
+
 
     }
 

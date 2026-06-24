@@ -107,7 +107,7 @@ impl RoomPhase for PlayingPhase {
                 }
 
                 if result.turn_ended() {
-                    let next_idx = game_state.advance_turn();
+                    let next_idx = game_state.current_turn;
                     let next_id = self.idx_to_id[&next_idx];
                     info!("Turn ended. Next player: {:?} ({:?})", next_id, next_idx);
                     broadcast(players, &ServerEvent::TurnEnded {
