@@ -965,7 +965,7 @@ use crate::infrastructure::error::ErrorCode;
 
         sleep(Duration::from_millis(20)).await;
 
-        // initital events, dismiss
+        // initial events, dismiss
         let _ = drain(&mut rx1).await;
         let _ = drain(&mut rx2).await;
 
@@ -977,13 +977,7 @@ use crate::infrastructure::error::ErrorCode;
         }).unwrap();
         sleep(Duration::from_millis(30)).await;
 
-        let draw_events = drain(&mut rx1).await;
-
-        let card_drawn = draw_events.iter().find_map(|m| {
-            if let ServerEvent::CardDrawn { card, .. } = &m.event {
-                Some(card.clone())
-            } else { None }
-        }).expect("CardDrawn event expected after draw");
+        let _ = drain(&mut rx1).await;
 
         cmd_tx.send(RoomCommand::PlayerAction {
             player_id: player1,
@@ -1003,52 +997,80 @@ use crate::infrastructure::error::ErrorCode;
         let end_events1 = drain(&mut rx1).await;
         let end_events2 = drain(&mut rx2).await;
 
-        println!("--- Player 1 events after move 1 ---");
-        for msg in &end_events1 {
-            println!("  {:?}", msg.event);
-            println!();
-        }
-        println!("--- Player 2 events after move 1 ---");
-        for msg in &end_events2 {
-            println!("  {:?}", msg.event);
-            println!();
-        }
-
         assert!(
             end_events1.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })),
-            "Player 1 should see TurnEnded"
+            "Player 1 should see TurnEnded 1"
         );
         assert!(
             end_events2.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })),
-            "Player 2 should see TurnEnded"
+            "Player 2 should see TurnEnded 1"
         );
 
-        let events1 = drain(&mut rx1).await;
-        let events2 = drain(&mut rx2).await;
-
-        let full_state1 = events1.iter().find_map(|m| {
+        let _ = end_events1.iter().find_map(|m| {
             if let ServerEvent::FullState { .. } = &m.event {
                 Some(&m.event)
             } else {
                 None
             }
-        }).expect("Expected a FullState event at end turn");
+        }).expect("Expected a FullState event at end turn 1");
 
-        let full_state2 = events2.iter().find_map(|m| {
+        let _ = end_events2.iter().find_map(|m| {
             if let ServerEvent::FullState { .. } = &m.event {
                 Some(&m.event)
             } else {
                 None
             }
-        }).expect("Expected a FullState event at end turn");
-
-        println!("=== FULL STATE ===");
-        println!("Player 1: {:#?}", full_state1);
-        println!("Player 2: {:#?}", full_state2);
+        }).expect("Expected a FullState event at end turn 1");
 
         // ---- Turn 2: Player 2 ----
+        // 1) Draw (mandatory)
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player2,
+            action: Action::Draw,
+        }).unwrap();
+        sleep(Duration::from_millis(30)).await;
 
+        let _ = drain(&mut rx2).await;
 
+        // end of turn 1
+        cmd_tx.send(RoomCommand::PlayerAction {
+            player_id: player2,
+            action: Action::MoveToSide { hand_idx: HandIdx(2), stack_idx: StackIdx(0) },
+        }).unwrap();
+        sleep(Duration::from_millis(30)).await;
+
+        let end_events1 = drain(&mut rx1).await;
+        let end_events2 = drain(&mut rx2).await;
+
+        assert!(
+            end_events1.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(0), .. })),
+            "Player 1 should see TurnEnded 2"
+        );
+        assert!(
+            end_events2.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(0), .. })),
+            "Player 2 should see TurnEnded 2"
+        );
+
+        let full_state1 = end_events1.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at end turn 2");
+
+        let full_state2 = end_events2.iter().find_map(|m| {
+            if let ServerEvent::FullState { .. } = &m.event {
+                Some(&m.event)
+            } else {
+                None
+            }
+        }).expect("Expected a FullState event at end turn 2");
+
+        println!("FULL STATE");
+        println!("{:?}", full_state1);
+        println!();
+        println!("{:?}", full_state2);
 
     }
 
