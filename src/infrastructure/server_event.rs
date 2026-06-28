@@ -33,11 +33,11 @@ pub enum ServerEvent {
         turn_seconds: Seconds,
     },
 
-    // ── Private: drawn card (only to the player who drew) ──
-    CardDrawn {
+    // ── Private: drawn cards (only to the player who drew) ──
+    HandRefill {
         player_id: PlayerId,
         player_idx: PlayerIdx,
-        card: Option<Card>,
+        cards: Vec<Card>,
     },
 
     // ── Public: a card was placed onto a scale ──

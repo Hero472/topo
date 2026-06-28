@@ -187,7 +187,7 @@ use crate::infrastructure::error::ErrorCode;
 
         let msgs = drain(&mut rx1).await;
         // Player1 should receive a CardDrawn event (private)
-        assert!(msgs.iter().any(|m| matches!(m.event, ServerEvent::CardDrawn { .. })));
+        assert!(msgs.iter().any(|m| matches!(m.event, ServerEvent::HandRefill { .. })));
     }
 
     #[tokio::test]
@@ -632,7 +632,7 @@ use crate::infrastructure::error::ErrorCode;
 
         // The first draw should succeed and emit CardDrawn
         let drawn_events: Vec<_> = msgs1.iter()
-            .filter(|m| matches!(m.event, ServerEvent::CardDrawn { .. }))
+            .filter(|m| matches!(m.event, ServerEvent::HandRefill { .. }))
             .collect();
         assert_eq!(drawn_events.len(), 1, "Only one CardDrawn expected (second draw invalid)");
 
@@ -658,17 +658,13 @@ use crate::infrastructure::error::ErrorCode;
         sleep(Duration::from_millis(10)).await;
 
         let msgs1 = drain(&mut rx1).await;
-        // We expect a FullState broadcast to the player (after draw, turn continues but a FullState might be sent?)
-        // Actually in the playing phase, only turn‑ending actions or game start send FullState.
-        // However, after a draw, the player receives a CardDrawn event; the test for FullState here might need a turn‑end.
-        // So we'll instead trigger a timeout to get a FullState.
-        // Let's change the test: we'll let the turn timeout to see the updated state.
-        // But to keep the test simple, we'll verify the CardDrawn event contains the correct card.
-        // We'll adjust the test to check that hand count changed in a later FullState.
-        // For now, just assert that CardDrawn event exists (already covered by valid_draw_action).
-        // This test can be refined based on actual game behavior.
-        assert!(msgs1.iter().any(|m| matches!(m.event, ServerEvent::CardDrawn { .. })));
-        // Could add more detailed state checks if we parse FullState.
+        // After a Draw action, the player now receives a HandRefilled event containing all drawn cards.
+        assert!(
+            msgs1.iter().any(|m| matches!(&m.event, ServerEvent::HandRefill { .. })),
+            "Expected HandRefilled event after draw"
+        );
+        // If you want to verify the hand count changed, you could trigger a turn end (via MoveToSide)
+        // and then inspect the FullState. But the current test just checks the draw notification.
     }
 
     #[tokio::test]
@@ -695,7 +691,7 @@ use crate::infrastructure::error::ErrorCode;
 
         let msgs1 = drain(&mut rx1).await;
         // Player1 must still receive the event; no panic should have happened
-        assert!(msgs1.iter().any(|m| matches!(m.event, ServerEvent::CardDrawn { .. })));
+        assert!(msgs1.iter().any(|m| matches!(m.event, ServerEvent::HandRefill { .. })));
     }
 
     #[tokio::test]
@@ -725,8 +721,7 @@ use crate::infrastructure::error::ErrorCode;
         // Now let the real timer fire for player1
         sleep(Duration::from_secs(2)).await;
         let msgs1 = drain(&mut rx1).await;
-        assert!(msgs1.iter().any(|m| matches!(&m.event,
-            ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })));
+        assert!(msgs1.iter().any(|m| matches!(&m.event, ServerEvent::TurnEnded { next_player_idx: PlayerIdx(1), .. })));
     }
 
     #[tokio::test]
@@ -920,7 +915,7 @@ use crate::infrastructure::error::ErrorCode;
             sleep(Duration::from_millis(10)).await;
             let extra = drain(&mut rx1).await;
             assert!(
-                extra.iter().any(|m| matches!(m.event, ServerEvent::CardDrawn { .. })),
+                extra.iter().any(|m| matches!(m.event, ServerEvent::HandRefill { .. })),
                 "If turn didn't end, another draw should succeed"
             );
         }

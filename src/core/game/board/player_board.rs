@@ -47,8 +47,9 @@ impl PlayerBoard {
 
     /// Adds a card to the hand (used during the draw phase).
     /// Can temporarily increase hand size beyond [`NORMAL_HAND_SIZE`].
-    pub fn draw_to_hand(&mut self, card: Card) {
+    pub fn draw_to_hand(&mut self, card: Card) -> Card {
         self.hand.push(card);
+        card
     }
 
     /// Current number of cards in hand.

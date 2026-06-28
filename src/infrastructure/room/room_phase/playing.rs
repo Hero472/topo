@@ -65,7 +65,7 @@ impl RoomPhase for PlayingPhase {
                     return None;
                 }
 
-                let result = match game_state.apply_move(player_idx, action.clone()) {
+                let (success, drawn_cards) = match game_state.apply_move(player_idx, action.clone()) {
                     Ok(success) => success,
                     Err(move_err) => {
                         let code = match move_err {
@@ -92,12 +92,19 @@ impl RoomPhase for PlayingPhase {
                     token.cancel();
                 }
 
-                process_action(players, game_state, &action, &result, player_id);
+                if drawn_cards.is_some() {
+                    send_to(players, player_id, ServerEvent::HandRefill {
+                        player_id,
+                        player_idx,
+                        cards: drawn_cards.unwrap(), // we know is Some OFC
+                    });
+                }
 
-                if let MoveSuccess::GameWon { winner_idx } = result {
+                process_action(players, game_state, &action, &success, player_id);
+
+                if let MoveSuccess::GameWon { winner_idx } = success {
                     let winner_external = self.idx_to_id[&winner_idx];
-                    info!("Game won by player {:?} ({:?}) in room {}",
-                          winner_external, winner_idx, self.room_id);
+                    info!("Game won by player {:?} ({:?}) in room {}", winner_external, winner_idx, self.room_id);
                     broadcast(players, &ServerEvent::GameOver {
                         winner_id: winner_external,
                         winner_idx,
@@ -106,10 +113,12 @@ impl RoomPhase for PlayingPhase {
                     return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())))
                 }
 
-                if result.turn_ended() {
+                if success.turn_ended() {
                     let next_idx = game_state.current_turn;
                     let next_id = self.idx_to_id[&next_idx];
+                    
                     info!("Turn ended. Next player: {:?} ({:?})", next_id, next_idx);
+
                     broadcast(players, &ServerEvent::TurnEnded {
                         next_player_id: next_id,
                         next_player_idx: next_idx,
@@ -118,6 +127,7 @@ impl RoomPhase for PlayingPhase {
                         timed_out_player_idx: None,
                     });
                     send_full_state(players, game_state);
+
                     start_timer(next_id, self.turn_seconds, timer, cmd_tx);
                     self.current_player = next_idx;
                 } else {

@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-use crate::core::{game_index::ScaleIdx, player::PlayerIdx};
+use crate::core::{game::card::Card, game_index::ScaleIdx, player::PlayerIdx};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]

@@ -79,9 +79,6 @@ pub fn process_action(
 
     for event in &events {
         match event {
-            ServerEvent::CardDrawn { player_id, .. } => {
-                send_to(players, *player_id, event.clone());
-            }
             ServerEvent::OpponentUpdate { player_id, .. } => {
                 send_to(players, *player_id, event.clone());
             }
@@ -102,16 +99,7 @@ pub fn generate_events(
     let mut events = Vec::new();
 
     match action {
-        Draw => {
-            let card = state
-                .player(player_idx)
-                .and_then(|p| p.hand.last().cloned());
-            events.push(ServerEvent::CardDrawn {
-                player_id,
-                player_idx,
-                card,
-            });
-        }
+        Draw => {/* does nothing */}
         OpenScale { .. } => {
             if let MoveSuccess::ScaleOpened { scale_id } = result {
                 if let Some(card) = state.scale(*scale_id).cards.last().cloned() {
