@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_ws::Message;
 use futures_util::StreamExt;
@@ -28,11 +30,11 @@ pub async fn ws_handler(
     let player_uuid = Uuid::parse_str(&query.player_id)
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("Invalid player_id UUID: {}", e)))?;
     let player_id = PlayerId(player_uuid);
-
     let username = query.username.as_deref().unwrap_or("Anonymous").to_string();
 
     log::info!("ws_handler room={}, player={:?}, username={}", room_id, player_id, username);
 
+    // ── Get or create the room ──
     let room = {
         let mut rooms = state.rooms.lock().unwrap();
         rooms
@@ -40,32 +42,44 @@ pub async fn ws_handler(
             .or_insert_with(|| {
                 RoomHandle::new_arc(
                     room_id.clone(),
-                    Seconds(60),
+                    Seconds(240), // here for changing the timer time in seconds, in the future it will be the front who puts the timer
                     state.room_shutdown_tx.clone(),
                 )
             })
             .clone()
     };
 
-    // Subscribe to events BEFORE adding the player so we don't miss any.
+    let is_reconnect = room.is_player_known(player_id).await;
+
     let mut event_rx = room.subscribe_player(player_id);
 
-    // Add player to the room; this will broadcast PlayerJoined etc.
-    if let Err(e) = room.add_player(player_id, username) {
-        log::error!("Failed to add player to room: {:?}", e);
-        return Err(actix_web::error::ErrorInternalServerError("Could not join room"));
+    if is_reconnect {
+        if let Err(e) = room.reconnect_player(player_id) {
+            log::error!("Failed to reconnect player: {:?}", e);
+            let _ = room.unsubscribe_player(player_id);
+            return Err(actix_web::error::ErrorInternalServerError("Reconnect failed"));
+        }
+    } else {
+        // Fresh join
+        if let Err(e) = room.add_player(player_id, username) {
+            log::error!("Failed to add player to room: {:?}", e);
+            let _ = room.unsubscribe_player(player_id);
+            return Err(actix_web::error::ErrorInternalServerError("Could not join room"));
+        }
     }
 
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, body)
         .map_err(|e| {
             log::error!("WebSocket upgrade failed: {}", e);
-            e
+            actix_web::error::ErrorInternalServerError(e)
         })?;
 
     let room_clone = room.clone();
 
     actix_rt::spawn(async move {
         log::debug!("Spawned WebSocket task for player {:?}", player_id);
+
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
 
         loop {
             tokio::select! {
@@ -76,22 +90,32 @@ pub async fn ws_handler(
                                 Ok(s) => s,
                                 Err(e) => {
                                     log::error!("Serialization error: {}", e);
-                                    // Skip this event; don't break the connection
-                                    continue;
+                                    continue; // skip this event
                                 }
                             };
                             if session.text(json).await.is_err() {
-                                // Client disconnected
-                                break;
+                                break; // client disconnected
                             }
                         }
                         None => {
-                            // Server closed the channel – room is shutting down
+                            // Room shut down – channel closed
+                            let _ = session.close(Some(actix_ws::CloseReason {
+                                code: actix_ws::CloseCode::Normal,
+                                description: Some("Room closed".into()),
+                            })).await;
                             break;
                         }
                     }
                 }
 
+                // Heartbeat – send a ping every 30 seconds
+                _ = heartbeat.tick() => {
+                    if session.ping(b"").await.is_err() {
+                        break; // connection lost
+                    }
+                }
+
+                // Client → server messages
                 maybe_msg = msg_stream.next() => {
                     match maybe_msg {
                         Some(Ok(msg)) => match msg {
@@ -100,17 +124,14 @@ pub async fn ws_handler(
                                     Ok(action) => {
                                         if let Err(e) = room_clone.apply_action(player_id, action) {
                                             log::warn!("Failed to apply action: {:?}", e);
-                                            // Send error back to client
                                             let err = serde_json::json!({
                                                 "error": "invalid_move",
                                                 "details": format!("{:?}", e)
                                             });
                                             let _ = session.text(err.to_string()).await;
-                                            // Don't break; client can try again
                                         }
                                     }
                                     Err(e) => {
-                                        // Invalid JSON – notify client
                                         let err = serde_json::json!({
                                             "error": "invalid_action",
                                             "details": e.to_string()
@@ -118,6 +139,14 @@ pub async fn ws_handler(
                                         let _ = session.text(err.to_string()).await;
                                     }
                                 }
+                            }
+                            Message::Ping(bytes) => {
+                                if session.pong(&bytes).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Message::Pong(_) => {
+                                // nothing needed, but keeps connection alive
                             }
                             Message::Close(_) => break,
                             _ => {}
@@ -132,14 +161,9 @@ pub async fn ws_handler(
             }
         }
 
-        // Player disconnected or WebSocket closed – tell the room
+        // Player disconnected – tell the room
         log::info!("Player {:?} disconnected, cleaning up", player_id);
         let _ = room_clone.remove_player(player_id);
-
-        // NOTE: Do NOT remove the room from the global map here.
-        // That's the room actor's responsibility. The room may still be alive
-        // with other players. When the room becomes empty, the actor should
-        // eventually shut itself down and unregister from the map.
     });
 
     Ok(response)

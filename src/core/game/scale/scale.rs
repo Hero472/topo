@@ -61,6 +61,7 @@ impl Scale {
         Ok(MoveSuccess::ScalePlaced {
             scale_id: self.scale_idx,
             completed: self.is_complete(),
+            placed_card: card
         })
     }
 }

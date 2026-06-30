@@ -5,8 +5,12 @@ use crate::core::{game::card::Card, game_index::ScaleIdx, player::PlayerIdx};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MoveSuccess {
-    ScalePlaced { scale_id: ScaleIdx, completed: bool },
-    ScaleOpened { scale_id: ScaleIdx },
+    ScalePlaced { 
+        scale_id: ScaleIdx,
+        completed: bool,
+        placed_card: Card
+    },
+    ScaleOpened { scale_id: ScaleIdx, placed_card: Card },
     Success,
     TurnEnded,
     GameWon { winner_idx: PlayerIdx },
@@ -32,6 +36,14 @@ mod tests {
     use super::*;
     use serde_json;
 
+    fn card() -> Card {
+        Card {
+            suit: crate::core::game::card::Suit::Clubs,
+            value: 1,
+            deck: crate::core::game::deck::DeckColor::Black
+        }
+    }
+
     #[test]
     fn turn_ended_returns_true_for_turn_ended() {
         let success = MoveSuccess::TurnEnded;
@@ -46,13 +58,13 @@ mod tests {
 
     #[test]
     fn turn_ended_returns_false_for_scale_placed() {
-        let success = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false };
+        let success = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false, placed_card: card() };
         assert!(!success.turn_ended());
     }
 
     #[test]
     fn turn_ended_returns_false_for_scale_opened() {
-        let success = MoveSuccess::ScaleOpened { scale_id: ScaleIdx(2) };
+        let success = MoveSuccess::ScaleOpened { scale_id: ScaleIdx(2), placed_card: card() };
         assert!(!success.turn_ended());
     }
 
@@ -68,7 +80,7 @@ mod tests {
 
     #[test]
     fn move_success_scale_placed_roundtrip() {
-        let original = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(3), completed: true };
+        let original = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(3), completed: true, placed_card: card() };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: MoveSuccess = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);
@@ -79,7 +91,7 @@ mod tests {
 
     #[test]
     fn move_success_scale_opened_roundtrip() {
-        let original = MoveSuccess::ScaleOpened { scale_id: ScaleIdx(5) };
+        let original = MoveSuccess::ScaleOpened { scale_id: ScaleIdx(5), placed_card: card() };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: MoveSuccess = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);

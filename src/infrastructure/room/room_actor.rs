@@ -534,7 +534,7 @@ use crate::infrastructure::error::ErrorCode;
     async fn subscribe_after_player_joined_is_handled() {
         let player1 = id(1);
         let player2 = id(2);
-        let (cmd_tx, mut rx1, _rx2) =
+        let (cmd_tx, _rx1, _rx2) =
             setup_actor("test_room", Seconds(60), player1, player2).await;
 
         let player3 = id(3);
@@ -815,7 +815,7 @@ use crate::infrastructure::error::ErrorCode;
                 break;
             }
             let msgs = drain(&mut rx1).await;
-            if let Some(msg) = msgs.iter().find(|m| matches!(m.event, ServerEvent::TurnEnded { .. })) {
+            if let Some(_msg) = msgs.iter().find(|m| matches!(m.event, ServerEvent::TurnEnded { .. })) {
                 elapsed = start.elapsed();
                 turn_ended = true;
                 break;

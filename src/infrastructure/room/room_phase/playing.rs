@@ -11,6 +11,7 @@ use crate::infrastructure::room::player_info::PlayerInfo;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::infrastructure::server_event::ServerEvent;
 use crate::infrastructure::room::utils::*;
+use crate::infrastructure::full_state::build_full_state;
 
 
 use super::*; 
@@ -116,7 +117,7 @@ impl RoomPhase for PlayingPhase {
                 if success.turn_ended() {
                     let next_idx = game_state.current_turn;
                     let next_id = self.idx_to_id[&next_idx];
-                    
+
                     info!("Turn ended. Next player: {:?} ({:?})", next_id, next_idx);
 
                     broadcast(players, &ServerEvent::TurnEnded {
@@ -257,9 +258,10 @@ impl RoomPhase for PlayingPhase {
 
                 let idx = info.player_idx;
 
-                // Send full state to the reconnected player
-                // (Build a proper FullState view here – reuse your existing function)
-                send_full_state(players, game_state);
+                // for now just opponent name
+                if let Some(event) = build_full_state(game_state, info.player_idx, String::from("Opponent name")) {
+                    send_to(players, player_id, event);
+                }
 
                 // Notify opponent
                 broadcast(players, &ServerEvent::PlayerReconnected {

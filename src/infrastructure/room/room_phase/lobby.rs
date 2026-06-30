@@ -44,12 +44,14 @@ impl RoomPhase for LobbyPhase {
         match cmd {
 
             RoomCommand::SubscribePlayer { player_id, sender } => {
-                players.entry(player_id).or_insert(PlayerInfo {
-                    username: String::new(),
-                    tx: sender,
-                    player_idx: PlayerIdx(usize::MAX), // placeholder, will be set on join
-                    connected: false
-                });
+                players.entry(player_id)
+                    .and_modify(|info| info.tx = sender.clone())
+                    .or_insert(PlayerInfo {
+                        username: String::new(),
+                        tx: sender,
+                        player_idx: PlayerIdx(usize::MAX),
+                        connected: false,
+                    });
                 None
             }
             
@@ -161,6 +163,25 @@ impl RoomPhase for LobbyPhase {
                 if players.is_empty() {
                     return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())));
                 }
+                None
+            },
+
+            RoomCommand::IsPlayerKnown { player_id, reply } => {
+                let known = players.contains_key(&player_id);
+                let _ = reply.send(known);
+                None
+            },
+
+            RoomCommand::PlayerReconnected { player_id, sender } => {
+                if let Some(info) = players.get_mut(&player_id) {
+                    info.tx = sender;
+                    info.connected = true;
+                }
+                None
+            },
+
+            RoomCommand::UnsubscribePlayer { player_id } => {
+                players.remove(&player_id);
                 None
             },
 

@@ -1,6 +1,7 @@
 use tokio::sync::mpsc;
 
 use crate::{core::{game::{actions::Action, state::state_types::Seed}, player::PlayerId}, infrastructure::message::GameMessage};
+use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub enum RoomCommand {
@@ -34,6 +35,15 @@ pub enum RoomCommand {
     PlayerReconnected {
         player_id: PlayerId,
         sender: mpsc::UnboundedSender<GameMessage>,
+    },
+
+    IsPlayerKnown {
+        player_id: PlayerId,
+        reply: oneshot::Sender<bool>,
+    },
+
+    UnsubscribePlayer {
+        player_id: PlayerId,
     },
 
     DisconnectTimeout {

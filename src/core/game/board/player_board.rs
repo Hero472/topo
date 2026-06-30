@@ -40,6 +40,10 @@ impl PlayerBoard {
         self.personal.len()
     }
 
+    pub fn push_personal(&mut self, card: Card) {
+        self.personal.push(card)
+    }
+
     /// Removes and returns the top card of the personal pile.
     pub fn pop_personal(&mut self) -> Option<Card> {
         self.personal.pop()

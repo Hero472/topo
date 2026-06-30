@@ -40,6 +40,14 @@ pub enum ServerEvent {
         cards: Vec<Card>,
     },
 
+    // ── Public: When personal is used needs to show the next ──
+    PersonalPileUpdated {
+        player_id: PlayerId,
+        player_idx: PlayerIdx,
+        count: usize,
+        top: Option<Card>,
+    },
+
     // ── Public: a card was placed onto a scale ──
     CardPlayedOnScale {
         player_id: PlayerId,
@@ -94,7 +102,7 @@ pub enum ServerEvent {
         your_board: PlayerBoardView,
         your_turn: bool,
         opponent: OpponentView,
-        scales: Vec<Scale>,
+        scales: Vec<Option<Scale>>,
         dealer_top: Option<DeckColor>,
         dealer_count: usize,
         turn_seconds_remaining: Seconds,

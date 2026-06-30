@@ -59,6 +59,13 @@ impl RoomPhase for OverPhase {
                     },
                 );
             }
+            RoomCommand::IsPlayerKnown { player_id, reply } => {
+                let known = players.contains_key(&player_id);
+                let _ = reply.send(known);
+            }
+            RoomCommand::UnsubscribePlayer { player_id } => {
+                players.remove(&player_id);
+            }
             // All other commands are silently ignored
             _ => {}
         }

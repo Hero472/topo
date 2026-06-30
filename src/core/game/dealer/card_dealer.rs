@@ -78,7 +78,7 @@ impl CardDealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::game::{card::{Card, Suit}, deck::DeckColor}, models::users};
+    use crate::{core::game::{card::{Card, Suit}, deck::DeckColor}};
 
     fn test_card(value: u8) -> Card {
         Card {

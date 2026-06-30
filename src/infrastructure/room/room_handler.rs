@@ -1,6 +1,5 @@
 use std::sync::Arc;
-use mongodb::action::Shutdown;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::error::SendError;
 use crate::core::game::state::Seconds;
 use crate::core::player::PlayerId;
@@ -42,6 +41,21 @@ impl RoomHandle {
         rx
     }
 
+    pub async fn is_player_known(&self, player_id: PlayerId) -> bool {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.cmd_tx.send(RoomCommand::IsPlayerKnown { player_id, reply: tx });
+        rx.await.unwrap_or(false)
+    }
+
+    pub fn reconnect_player(
+        &self,
+        player_id: PlayerId,
+    ) -> Result<mpsc::UnboundedReceiver<GameMessage>, SendError<RoomCommand>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.cmd_tx.send(RoomCommand::PlayerReconnected { player_id, sender: tx })?;
+        Ok(rx)
+    }
+
     pub fn add_player(
         &self,
         player_id: PlayerId,
@@ -50,6 +64,9 @@ impl RoomHandle {
         self.cmd_tx.send(RoomCommand::PlayerJoined { player_id, username })
     }
 
+    pub fn unsubscribe_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
+        self.cmd_tx.send(RoomCommand::UnsubscribePlayer { player_id })
+    }
 
     pub fn remove_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerLeft { player_id })

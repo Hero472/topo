@@ -1,5 +1,6 @@
 // Main entry point for the Actix Web application
 
+use actix_web::web::PayloadConfig;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use actix_cors::Cors;
 use tokio::sync::mpsc;
@@ -38,6 +39,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .app_data(app_state.clone())
+            .app_data(PayloadConfig::new(4096))
             .route("/ws/{room_id}", web::get().to(ws_handler))
             .route("/health", web::get().to(|| async { "OK" }))
             .route("/{tail:.*}", web::get().to(|req: HttpRequest| async move {

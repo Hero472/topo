@@ -57,11 +57,10 @@ pub fn build_full_state(
     let draw_top = game_state.card_dealer.peek().clone();
     let color_top = draw_top.map(|card| card.deck);
 
-    let your_turn = game_state
-        .players
-        .get(game_state.current_turn.as_usize())
-        .map(|p| p.player_idx)
-        .unwrap_or(PlayerIdx(0)) == player_idx;
+    let scales = game_state.scale_manager.scales
+        .iter()
+        .map(|opt| opt.clone())
+        .collect();
 
     Some(ServerEvent::FullState {
         your_board: your_board_view,
@@ -71,7 +70,7 @@ pub fn build_full_state(
             .map(|p| p.player_idx)
             .unwrap_or(PlayerIdx(0)) == player_idx,
         opponent,
-        scales: game_state.scale_manager.scales.clone(),
+        scales,
         dealer_top: color_top,
         dealer_count: game_state.card_dealer.draw_pile.remaining(),
         turn_seconds_remaining: game_state.turn_seconds,

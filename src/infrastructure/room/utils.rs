@@ -101,31 +101,46 @@ pub fn generate_events(
     match action {
         Draw => {/* does nothing */}
         OpenScale { .. } => {
-            if let MoveSuccess::ScaleOpened { scale_id } = result {
-                if let Some(card) = state.scale(*scale_id).cards.last().cloned() {
-                    events.push(ServerEvent::CardPlayedOnScale {
-                        player_id,
-                        player_idx,
-                        card,
-                        scale_idx: *scale_id,
-                        completed: false,
-                    });
-                }
+            if let MoveSuccess::ScaleOpened { scale_id, placed_card } = result {
+                events.push(ServerEvent::CardPlayedOnScale {
+                    player_id,
+                    player_idx,
+                    card: *placed_card,
+                    scale_idx: *scale_id,
+                    completed: false,
+                });
                 events.push(opponent_update(state, player_id, player_idx));
             }
         }
         PlayHand { .. } | PlayPersonal { .. } | PlaySide { .. } => {
-            if let MoveSuccess::ScalePlaced { scale_id, completed } = result {
-                if let Some(card) = state.scale(*scale_id).cards.last().cloned() {
-                    events.push(ServerEvent::CardPlayedOnScale {
-                        player_id,
-                        player_idx,
-                        card,
+            if let MoveSuccess::ScalePlaced { scale_id, completed, placed_card } = result {
+                events.push(ServerEvent::CardPlayedOnScale {
+                    player_id,
+                    player_idx,
+                    card: *placed_card,
+                    scale_idx: *scale_id,
+                    completed: *completed,
+                });
+                events.push(opponent_update(state, player_id, player_idx));
+
+                if *completed {
+                    events.push(ServerEvent::ScaleCompleted {
                         scale_idx: *scale_id,
-                        completed: *completed,
+                        by_player_id: player_id,
+                        by_player_idx: player_idx,
                     });
                 }
-                events.push(opponent_update(state, player_id, player_idx));
+
+                if matches!(action, PlayPersonal { .. }) {
+                    if let Some(board) = state.player(player_idx) {
+                        events.push(ServerEvent::PersonalPileUpdated {
+                            player_id,
+                            player_idx,
+                            count: board.personal.len(),
+                            top: board.personal_top().cloned(),
+                        });
+                    }
+                }
             }
         }
         MoveToSide { stack_idx, .. } => {
@@ -155,6 +170,16 @@ pub fn generate_events(
                         stack_idx: *stack_idx,
                     });
                 }
+
+                if let Some(board) = state.player(player_idx) {
+                    events.push(ServerEvent::PersonalPileUpdated {
+                        player_id,
+                        player_idx,
+                        count: board.personal.len(),
+                        top: board.personal_top().cloned(),
+                    });
+                }
+
                 events.push(opponent_update(state, player_id, player_idx));
             }
         }

@@ -72,8 +72,8 @@ impl GameState {
             scale_manager: ScaleManager::new(),
             current_turn: PlayerIdx(0),
             turn_phase: TurnPhase::Draw,
-            turn_seconds: Seconds(60),
-            play_time: Seconds(60),
+            turn_seconds: Seconds(240),
+            play_time: Seconds(0),
             seed,
         }
     }
@@ -134,10 +134,6 @@ impl GameState {
         self.players.iter().find(|p| p.player_idx == idx)
     }
 
-    fn player_mut(&mut self, idx: PlayerIdx) -> Option<&mut PlayerBoard> {
-        self.players.iter_mut().find(|p| p.player_idx == idx)
-    }
-
     /// (Re)start the game with a fresh deck, deal, and reset scales.
     pub fn start_game(&mut self) {
         self.card_dealer = CardDealer::new(self.seed);
@@ -161,13 +157,6 @@ impl GameState {
 
     // ── Turn & phase helpers ──────────────────────────────────
 
-    fn current_vec_index(&self) -> usize {
-        self.players
-            .iter()
-            .position(|p| p.player_idx == self.current_turn)
-            .expect("Current player not found")
-    }
-
     pub fn current_player_idx(&self) -> Option<PlayerIdx> {
         if self.phase != GamePhase::Playing {
             return None;
@@ -179,7 +168,7 @@ impl GameState {
         self.phase == GamePhase::Playing
     }
 
-    pub fn scale(&self, scale_idx: ScaleIdx) -> &Scale {
+    pub fn scale(&self, scale_idx: ScaleIdx) -> &Option<Scale> {
         &self.scale_manager.scales[scale_idx.as_usize()]
     }
 
@@ -339,14 +328,26 @@ impl GameState {
                 let card = self.players[idx].pop_personal()
                     .ok_or(MoveError::InvalidIndex { kind: "personal".into() })?;
 
-                if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
-                    self.players[idx].hand.push(card);
-                    return Err(MoveError::DoesNotFit);
+                if card.value == 1 {
+                    match self.scale_manager.open_scale(card) {
+                        Ok(success) => {
+                            let drawn = self.refill_hand_to_five(player_idx);
+                            Ok((success, drawn))
+                        }
+                        Err(e) => {
+                            self.players[idx].push_personal(card);
+                            Err(e)
+                        }
+                    }
+                } else {
+                    if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
+                        self.players[idx].push_personal(card);
+                        return Err(MoveError::DoesNotFit);
+                    }
+                    let result = self.scale_manager.place_on_scale(scale_idx, card)?;
+                    let drawn = self.refill_hand_to_five(player_idx);
+                    Ok((result, drawn))
                 }
-
-                let result = self.scale_manager.place_on_scale(scale_idx, card)?;
-                let drawn = self.refill_hand_to_five(player_idx);
-                Ok((result, drawn))
             }
 
             Action::PlaySide { stack_idx, scale_idx } => {
@@ -457,6 +458,10 @@ mod tests {
 
     fn current_turn_player(gs: &GameState) -> PlayerIdx {
         gs.current_turn
+    }
+
+    fn card(value: u8) -> Card {
+        Card { suit: Suit::Hearts, value, deck: DeckColor::Red }
     }
 
     // ── Initialization & player management ───────────────────
@@ -663,8 +668,8 @@ mod tests {
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red };
         let hand_size_before = hand_len(&gs, 0);
         let result = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0) }, Some(vec![]))));
-        assert_eq!(gs.scale_manager.scales.len(), 1);
+        assert_eq!(result, Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) }, Some(vec![]))));
+        assert_eq!(gs.scale_manager.scales.len(), 8);
         assert_eq!(hand_len(&gs, 0), hand_size_before - 1);
     }
 
@@ -684,17 +689,11 @@ mod tests {
         let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
-        let scale = Scale::new(ScaleIdx(0));
-        gs.scale_manager.scales.push(scale.clone());
+        let mut scale = Scale::new(ScaleIdx(0));
+        scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
+        gs.scale_manager.scales[0] = Some(scale);
         let retrieved = gs.scale(ScaleIdx(0));
-        assert_eq!(retrieved.scale_idx, ScaleIdx(0));
-    }
-
-    #[test]
-    #[should_panic(expected = "index out of bounds")]
-    fn scale_panics_for_invalid_id() {
-        let gs = empty_game_for_lobby();
-        let _ = gs.scale(ScaleIdx(0));
+        assert_eq!(retrieved.as_ref().unwrap().scale_idx, ScaleIdx(0));
     }
 
     // ── can_place_on_scale ──────────────────────────────────────
@@ -703,11 +702,15 @@ mod tests {
         let mut gs = empty_game_for_lobby();
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(0));
         gs.add_player(PlayerId(Uuid::nil()), PlayerIdx(1));
+
+        // Create a scale and place it directly into slot 0
         let mut scale = Scale::new(ScaleIdx(0));
         scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
-        gs.scale_manager.scales.push(scale);
+        gs.scale_manager.scales[0] = Some(scale); // assign to index 0
+
         let card = Card { suit: Suit::Hearts, value: 2, deck: DeckColor::Red };
         assert!(gs.can_place_on_scale(ScaleIdx(0), &card));
+
         let bad_card = Card { suit: Suit::Spades, value: 3, deck: DeckColor::Blue };
         assert!(!gs.can_place_on_scale(ScaleIdx(0), &bad_card));
     }
@@ -724,12 +727,12 @@ mod tests {
     fn play_hand_valid() {
         let mut gs = make_game();
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
-        gs.players[0].hand[0] = Card { value: 1, ..gs.players[0].hand[0] };
+        gs.players[0].hand[0] = card(1);
         let _ = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
-        gs.players[0].hand[0] = Card { value: 2, ..gs.players[0].hand[0] };
+        gs.players[0].hand[0] = card(2);
         let result = gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(0) });
         let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false }, result_copy.1)));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, result_copy.1)));
         assert_eq!(hand_len(&gs, 0), 4);
     }
 
@@ -765,13 +768,15 @@ mod tests {
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].personal[12] = Card {
             suit: Suit::Hearts,
-            value: 1,
+            value: 2,
             deck: DeckColor::Red,
         };
-        gs.scale_manager.scales.push(Scale::new(ScaleIdx(0)));
+        let mut scale = Scale::new(ScaleIdx(0));
+        scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
+        gs.scale_manager.scales[0] = Some(scale);
         let result = gs.apply_move(PlayerIdx(0), Action::PlayPersonal { scale_idx: ScaleIdx(0) });
         let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false }, result_copy.1)));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, result_copy.1)));
         assert_eq!(personal_len(&gs, 0), 12);
     }
 
@@ -780,11 +785,12 @@ mod tests {
     fn play_side_to_scale() {
         let mut gs = make_game();
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
-        let card = gs.players[0].hand[0];
-        gs.players[0].side[0].push(Card { value: 1, ..card });
-        gs.scale_manager.scales.push(Scale::new(ScaleIdx(0)));
+        gs.players[0].side[0].push(card(2));
+        let mut scale = Scale::new(ScaleIdx(0));
+        scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
+        gs.scale_manager.scales[0] = Some(scale);
         let result = gs.apply_move(PlayerIdx(0), Action::PlaySide { stack_idx: StackIdx(0), scale_idx: ScaleIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false }, Some(vec![]))));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, Some(vec![]))));
         assert!(gs.players[0].side[0].is_empty());
     }
 
@@ -869,7 +875,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(res, MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0) });
+        assert_eq!(res, MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) });
         assert_eq!(gs.players[0].hand.len(), 5);
         assert_eq!(refill_cards.clone().unwrap().len(), 5);
 
@@ -891,12 +897,12 @@ mod tests {
 
         gs.players[0].hand[0] = Card { value: 1, suit: Suit::Hearts, deck: DeckColor::Red };
 
-        assert_eq!(gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0) }, Some(vec![]))));
+        assert_eq!(gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) }, Some(vec![]))));
         assert_eq!(hand_len(&gs, 0), 5);
-        assert_eq!(gs.scale_manager.scales.len(), 1);
+        assert_eq!(gs.scale_manager.scales.len(), 8);
 
         gs.players[0].hand[0] = Card { value: 2, suit: Suit::Hearts, deck: DeckColor::Red };
-        assert_eq!(gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(0) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false }, Some(vec![]))));
+        assert_eq!(gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(0) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, Some(vec![]))));
         assert_eq!(hand_len(&gs, 0), 4);
 
         assert_eq!(gs.apply_move(PlayerIdx(0), Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(0) }), Ok((MoveSuccess::TurnEnded, None)));
@@ -911,12 +917,12 @@ mod tests {
         assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
         assert_eq!(hand_len(&gs, 1), 6);
 
-        gs.players[1].hand[0] = Card { value: 1, suit: Suit::Diamonds, deck: DeckColor::Blue };
-        assert_eq!(gs.apply_move(PlayerIdx(1), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(1) }, Some(vec![]))));
+        gs.players[1].hand[0] = Card { value: 1, suit: Suit::Hearts, deck: DeckColor::Red };
+        assert_eq!(gs.apply_move(PlayerIdx(1), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(1), placed_card: card(1) }, Some(vec![]))));
         assert_eq!(hand_len(&gs, 1), 5);
 
-        gs.players[1].hand[0] = Card { value: 2, suit: Suit::Diamonds, deck: DeckColor::Blue };
-        assert_eq!(gs.apply_move(PlayerIdx(1), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(1) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false }, Some(vec![]))));
+        gs.players[1].hand[0] = Card { value: 2, suit: Suit::Hearts, deck: DeckColor::Red };
+        assert_eq!(gs.apply_move(PlayerIdx(1), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(1) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false, placed_card: card(2) }, Some(vec![]))));
         assert_eq!(hand_len(&gs, 1), 4);
     }
 
