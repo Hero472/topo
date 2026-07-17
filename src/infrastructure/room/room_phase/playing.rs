@@ -3,6 +3,7 @@ use log::{info, debug, warn};
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::core::game::actions::move_result::MoveResult;
 use crate::core::game::actions::{MoveSuccess, MoveError};
 use crate::core::game::state::{GameState, Seconds};
 use crate::core::player::PlayerIdx;
@@ -66,7 +67,11 @@ impl RoomPhase for PlayingPhase {
                     return None;
                 }
 
-                let (success, drawn_cards) = match game_state.apply_move(player_idx, action.clone()) {
+                let MoveResult {
+                    success,
+                    drawn_cards,
+                    discarded_cards
+                } = match game_state.apply_move(player_idx, action.clone()) {
                     Ok(success) => success,
                     Err(move_err) => {
                         let code = match move_err {

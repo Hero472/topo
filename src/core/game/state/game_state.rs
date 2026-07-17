@@ -3,12 +3,7 @@ use uuid::Uuid;
 
 use crate::core::{
     game::{
-        actions::{Action, MoveError, MoveSuccess, TurnPhase},
-        board::PlayerBoard,
-        card::Card,
-        dealer::CardDealer,
-        scale::{Scale, ScaleManager}, 
-        state::{Seconds, state_types::Seed},
+        actions::{Action, MoveError, MoveSuccess, TurnPhase, move_result::MoveResult}, board::PlayerBoard, card::Card, dealer::CardDealer, scale::{Scale, ScaleManager}, state::{Seconds, state_types::Seed},
     }, game_index::ScaleIdx, player::{PlayerId, PlayerIdx}
 };
 
@@ -242,7 +237,6 @@ impl GameState {
         let next_raw = (current_raw + 1) % self.players.len();
         self.current_turn = PlayerIdx(next_raw);
         self.turn_phase = TurnPhase::Draw;
-        self.turn_seconds = Seconds(60);
         self.players[next_raw].player_idx
     }
 
@@ -257,7 +251,7 @@ impl GameState {
         &mut self,
         player_idx: PlayerIdx,
         action: Action
-    ) -> Result<(MoveSuccess, Option<Vec<Card>>), MoveError> {
+    ) -> Result<MoveResult, MoveError> {
 
         let idx = self
             .players
@@ -280,7 +274,11 @@ impl GameState {
                 }
                 let drawn = self.execute_draw_phase(player_idx);
                 self.turn_phase = TurnPhase::Play;
-                Ok((MoveSuccess::Success, Some(drawn)))
+                Ok(MoveResult {
+                    success: MoveSuccess::Success,
+                    drawn_cards: Some(drawn),
+                    discarded_cards: None,
+                })
             }
 
             Action::OpenScale { hand_idx } => {
@@ -297,9 +295,13 @@ impl GameState {
                 }
 
                 let card = self.players[idx].take_from_hand(hand_idx.as_usize()).unwrap();
-                let result = self.scale_manager.open_scale(card)?;
+                let success = self.scale_manager.open_scale(card)?;
                 let drawn = self.refill_hand_to_five(player_idx);
-                Ok((result, drawn))
+                Ok(MoveResult {
+                    success,
+                    drawn_cards: drawn,
+                    discarded_cards: None,
+                })
             }
 
             Action::PlayHand { hand_idx, scale_idx } => {
@@ -315,9 +317,20 @@ impl GameState {
                 }
 
                 let card = self.players[idx].take_from_hand(hand_idx.as_usize()).unwrap();
-                let result = self.scale_manager.place_on_scale(scale_idx, card)?;
+                
+                let (success, discarded) = self.scale_manager.place_on_scale(scale_idx, card)?;
+                
+                if let Some(cards) = &discarded {
+                    self.card_dealer.return_to_discard(cards.iter().cloned());
+                }
+
                 let drawn = self.refill_hand_to_five(player_idx);
-                Ok((result, drawn))
+                
+                Ok(MoveResult {
+                    success,
+                    drawn_cards: drawn,
+                    discarded_cards: discarded,
+                })
             }
 
             Action::PlayPersonal { scale_idx } => {
@@ -329,24 +342,41 @@ impl GameState {
                     .ok_or(MoveError::InvalidIndex { kind: "personal".into() })?;
 
                 if card.value == 1 {
-                    match self.scale_manager.open_scale(card) {
-                        Ok(success) => {
-                            let drawn = self.refill_hand_to_five(player_idx);
-                            Ok((success, drawn))
-                        }
+                    let success = match self.scale_manager.open_scale(card) {
+                        Ok(success) => success,
                         Err(e) => {
                             self.players[idx].push_personal(card);
-                            Err(e)
+                            return Err(e);
                         }
-                    }
+                    };
+
+                    let drawn = self.refill_hand_to_five(player_idx);
+
+                    Ok(MoveResult {
+                            success,
+                            drawn_cards: drawn,
+                            discarded_cards: None,
+                        }
+                    )
                 } else {
                     if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
                         self.players[idx].push_personal(card);
                         return Err(MoveError::DoesNotFit);
                     }
-                    let result = self.scale_manager.place_on_scale(scale_idx, card)?;
+
+                    let (success, discarded) = self.scale_manager.place_on_scale(scale_idx, card)?;
+
+                    if let Some(cards) = &discarded {
+                        self.card_dealer.return_to_discard(cards.iter().cloned());
+                    }
+
                     let drawn = self.refill_hand_to_five(player_idx);
-                    Ok((result, drawn))
+
+                    Ok(MoveResult {
+                        success,
+                        drawn_cards: drawn,
+                        discarded_cards: discarded,
+                    })
                 }
             }
 
@@ -363,32 +393,56 @@ impl GameState {
                     return Err(MoveError::DoesNotFit);
                 }
 
-                let result = self.scale_manager.place_on_scale(scale_idx, card)?;
+                let (success, discarded) = self.scale_manager.place_on_scale(scale_idx, card)?;
+                
+                if let Some(cards) = &discarded {
+                    self.card_dealer.return_to_discard(cards.iter().cloned());
+                }
+                
                 let drawn = self.refill_hand_to_five(player_idx);
-                Ok((result, drawn))
+                Ok(MoveResult {
+                    success,
+                    drawn_cards: drawn,
+                    discarded_cards: discarded,
+                })
             }
 
             Action::MoveToSide { hand_idx, stack_idx } => {
-                if self.turn_phase != TurnPhase::Play {
-                    return Err(MoveError::NotAllowed);
-                }
-
-                let card = self.players[idx].take_from_hand(hand_idx.as_usize())
-                    .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into() })?;
-
-                if self.players[idx].place_on_side(stack_idx, card) {
-                    if self.players[idx].has_won() {
-                        self.phase = GamePhase::Finished;
-
-                        return Ok((MoveSuccess::GameWon { winner_idx: player_idx }, None));
+                    if self.turn_phase != TurnPhase::Play {
+                        return Err(MoveError::NotAllowed);
                     }
-                    self.advance_turn();
-                    Ok((MoveSuccess::TurnEnded, None))
-                } else {
-                    self.players[idx].hand.push(card);
-                    Err(MoveError::InvalidIndex { kind: "stack".into() })
+
+                    let card = self.players[idx].take_from_hand(hand_idx.as_usize())
+                        .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into() })?;
+
+                    if self.players[idx].place_on_side(stack_idx, card) {
+                        if self.players[idx].has_won() {
+                            self.phase = GamePhase::Finished;
+
+                            Ok(MoveResult {
+                                success: MoveSuccess::GameWon {
+                                    winner_idx: player_idx,
+                                },
+                                drawn_cards: None,
+                                discarded_cards: None,
+                            })
+                        } else {
+                            self.advance_turn();
+
+                            Ok(MoveResult {
+                                success: MoveSuccess::TurnEnded,
+                                drawn_cards: None,
+                                discarded_cards: None,
+                            })
+                        }
+                    } else {
+                        self.players[idx].hand.push(card);
+
+                        return Err(MoveError::InvalidIndex {
+                            kind: "stack".into(),
+                        });
+                    }
                 }
-            }
 
             Action::MovePersonalToSide { stack_idx } => {
                 if self.turn_phase != TurnPhase::Play {
@@ -403,7 +457,11 @@ impl GameState {
                 let card = self.players[idx].pop_personal().unwrap();
                 if self.players[idx].place_on_side(stack_idx, card) {
                     let drawn = self.refill_hand_to_five(player_idx);
-                    Ok((MoveSuccess::Success, drawn))
+                    Ok(MoveResult {
+                        success: MoveSuccess::Success,
+                        drawn_cards: drawn,
+                        discarded_cards: None,
+                    })
                 } else {
                     self.players[idx].personal.push(card);
                     Err(MoveError::InvalidIndex { kind: "stack".into() })
@@ -411,7 +469,6 @@ impl GameState {
             }
         }
     }
-        
 }
 
 #[cfg(test)]
@@ -632,11 +689,18 @@ mod tests {
         let mut gs = make_game();
         let player_idx = current_turn_player(&gs);
         let initial_hand = hand_len(&gs, 0);
-        let result: Result<(MoveSuccess, Option<Vec<Card>>), MoveError> = gs.apply_move(player_idx, Action::Draw);
-        let result_copy = result.clone();
+        let result = gs.apply_move(player_idx, Action::Draw);
+
+        assert!(result.is_ok());
+
+        let move_result = result.unwrap();
+
+        assert_eq!(move_result.success, MoveSuccess::Success);
+        assert!(move_result.discarded_cards.is_none());
+        assert!(move_result.drawn_cards.is_some());
+
         assert_eq!(initial_hand, 5);
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.unwrap().1)));
-        assert!(hand_len(&gs, 0) >= 6, "expected hand size >=6, got {}", hand_len(&gs, 0));
+        assert!(hand_len(&gs, 0) >= 6);
         assert_eq!(gs.turn_phase, TurnPhase::Play);
     }
 
@@ -654,9 +718,10 @@ mod tests {
         while gs.card_dealer.remaining() > 0 {
             gs.card_dealer.draw_one();
         }
-        let result = gs.apply_move(PlayerIdx(0), Action::Draw);
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
+        let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+
+        assert_eq!(result.success, MoveSuccess::Success);
+        assert!(result.discarded_cards.is_none());
         assert_eq!(gs.turn_phase, TurnPhase::Play);
     }
 
@@ -668,7 +733,17 @@ mod tests {
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red };
         let hand_size_before = hand_len(&gs, 0);
         let result = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) }, Some(vec![]))));
+        assert_eq!(
+            result,
+            Ok(MoveResult {
+                success: MoveSuccess::ScaleOpened {
+                    scale_id: ScaleIdx(0),
+                    placed_card: card(1),
+                },
+                drawn_cards: Some(vec![]),
+                discarded_cards: None,
+            })
+        );
         assert_eq!(gs.scale_manager.scales.len(), 8);
         assert_eq!(hand_len(&gs, 0), hand_size_before - 1);
     }
@@ -726,13 +801,36 @@ mod tests {
     #[test]
     fn play_hand_valid() {
         let mut gs = make_game();
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
+
         gs.players[0].hand[0] = card(1);
-        let _ = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
+        let _ = gs.apply_move(PlayerIdx(0), Action::OpenScale {
+            hand_idx: HandIdx(0),
+        });
+
         gs.players[0].hand[0] = card(2);
-        let result = gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(0) });
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, result_copy.1)));
+
+        let result = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::PlayHand {
+                    hand_idx: HandIdx(0),
+                    scale_idx: ScaleIdx(0),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.success,
+            MoveSuccess::ScalePlaced {
+                scale_id: ScaleIdx(0),
+                completed: false,
+                placed_card: card(2),
+            }
+        );
+
+        assert_eq!(result.discarded_cards, None);
         assert_eq!(hand_len(&gs, 0), 4);
     }
 
@@ -775,8 +873,18 @@ mod tests {
         scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
         gs.scale_manager.scales[0] = Some(scale);
         let result = gs.apply_move(PlayerIdx(0), Action::PlayPersonal { scale_idx: ScaleIdx(0) });
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, result_copy.1)));
+        let move_result = result.unwrap();
+
+        assert_eq!(
+            move_result.success,
+            MoveSuccess::ScalePlaced {
+                scale_id: ScaleIdx(0),
+                completed: false,
+                placed_card: card(2),
+            }
+        );
+
+        assert!(move_result.discarded_cards.is_none());
         assert_eq!(personal_len(&gs, 0), 12);
     }
 
@@ -790,7 +898,18 @@ mod tests {
         scale.push(Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red }).unwrap();
         gs.scale_manager.scales[0] = Some(scale);
         let result = gs.apply_move(PlayerIdx(0), Action::PlaySide { stack_idx: StackIdx(0), scale_idx: ScaleIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, Some(vec![]))));
+        assert_eq!(
+            result,
+            Ok(MoveResult {
+                success: MoveSuccess::ScalePlaced {
+                    scale_id: ScaleIdx(0),
+                    completed: false,
+                    placed_card: card(2),
+                },
+                drawn_cards: Some(vec![]),
+                discarded_cards: None,
+            })
+        );
         assert!(gs.players[0].side[0].is_empty());
     }
 
@@ -798,14 +917,28 @@ mod tests {
     #[test]
     fn move_to_side_ends_turn() {
         let mut gs = make_game();
-        let result = gs.apply_move(PlayerIdx(0), Action::Draw);
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
+        let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+
+        assert_eq!(result.success, MoveSuccess::Success);
         assert_eq!(hand_len(&gs, 0), 6);
+
         let initial_turn = gs.current_turn;
-        let result = gs.apply_move(PlayerIdx(0), Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::TurnEnded, None)));
-        assert_eq!(gs.current_turn, (PlayerIdx((initial_turn.0 + 1) % 2)));
+
+        let result = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::MoveToSide {
+                    hand_idx: HandIdx(0),
+                    stack_idx: StackIdx(0),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.success, MoveSuccess::TurnEnded);
+        assert!(result.drawn_cards.is_none());
+        assert!(result.discarded_cards.is_none());
+
+        assert_eq!(gs.current_turn, PlayerIdx((initial_turn.0 + 1) % 2));
         assert_eq!(gs.turn_phase, TurnPhase::Draw);
         assert_eq!(gs.players[0].side[0].len(), 1);
         assert_eq!(hand_len(&gs, 0), 5);
@@ -815,16 +948,31 @@ mod tests {
     #[test]
     fn move_king_from_personal_to_side() {
         let mut gs = make_game();
-        let result = gs.apply_move(PlayerIdx(0), Action::Draw);
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
-        let king = Card { suit: Suit::Spades, value: 13, deck: DeckColor::Blue };
+        let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+        assert_eq!(result.success, MoveSuccess::Success);
+
+        let king = Card {
+            suit: Suit::Spades,
+            value: 13,
+            deck: DeckColor::Blue,
+        };
+
         gs.players[0].personal.clear();
         gs.players[0].personal.push(king);
-        let result = gs.apply_move(PlayerIdx(0), Action::MovePersonalToSide { stack_idx: StackIdx(0) });
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
-        assert_eq!(gs.players[0].personal.is_empty(), true);
+
+        let result = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::MovePersonalToSide {
+                    stack_idx: StackIdx(0),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.success, MoveSuccess::Success);
+        assert!(result.discarded_cards.is_none());
+
+        assert!(gs.players[0].personal.is_empty());
         assert_eq!(gs.players[0].side[0].len(), 1);
     }
 
@@ -846,8 +994,25 @@ mod tests {
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].personal.clear();
         gs.players[0].hand = vec![Card { value: 2, ..gs.players[0].hand[0] }];
-        let result = gs.apply_move(PlayerIdx(0), Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(0) });
-        assert_eq!(result, Ok((MoveSuccess::GameWon { winner_idx: PlayerIdx(0) }, None)));
+        let result = gs.apply_move(
+            PlayerIdx(0),
+            Action::MoveToSide {
+                hand_idx: HandIdx(0),
+                stack_idx: StackIdx(0),
+            },
+        );
+
+        assert_eq!(
+            result,
+            Ok(MoveResult {
+                success: MoveSuccess::GameWon {
+                    winner_idx: PlayerIdx(0),
+                },
+                drawn_cards: None,
+                discarded_cards: None,
+            })
+        );
+
         assert_eq!(gs.phase, GamePhase::Finished);
     }
 
@@ -857,29 +1022,51 @@ mod tests {
     fn refill_hand() {
         let mut gs = make_game();
 
-        let (res, drawn) = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+        let MoveResult {
+            success: res,
+            drawn_cards: drawn,
+            discarded_cards: _,
+        } = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+
         assert_eq!(res, MoveSuccess::Success);
-        assert!(drawn.clone().unwrap().len() >= 1);
-        assert!(!drawn.unwrap().is_empty());
+        assert!(drawn.as_ref().unwrap().len() >= 1);
+        assert!(!drawn.as_ref().unwrap().is_empty());
 
         gs.players[0].hand = vec![Card {
             value: 1,
             suit: Suit::Hearts,
             deck: DeckColor::Red,
         }];
+
         assert_eq!(gs.players[0].hand.len(), 1);
 
-        let (res, refill_cards) = gs
-        .apply_move(PlayerIdx(0), Action::OpenScale {
-            hand_idx: HandIdx(0),
-        })
-        .unwrap();
+        let MoveResult {
+            success: res,
+            drawn_cards: refill_cards,
+            discarded_cards: _,
+        } = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::OpenScale {
+                    hand_idx: HandIdx(0),
+                },
+            )
+            .unwrap();
 
-        assert_eq!(res, MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) });
+        assert_eq!(
+            res,
+            MoveSuccess::ScaleOpened {
+                scale_id: ScaleIdx(0),
+                placed_card: card(1),
+            }
+        );
+
         assert_eq!(gs.players[0].hand.len(), 5);
-        assert_eq!(refill_cards.clone().unwrap().len(), 5);
 
-        for (i, card) in refill_cards.unwrap().iter().enumerate() {
+        let refill_cards = refill_cards.unwrap();
+        assert_eq!(refill_cards.len(), 5);
+
+        for (i, card) in refill_cards.iter().enumerate() {
             assert_eq!(gs.players[0].hand[i], *card);
         }
     }
@@ -890,39 +1077,138 @@ mod tests {
         let mut gs = make_game();
 
         // Turn 1: Player 0
-        let result = gs.apply_move(PlayerIdx(0), Action::Draw);
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
+        let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
+        assert_eq!(result.success, MoveSuccess::Success);
+        assert!(result.drawn_cards.is_some());
         assert_eq!(hand_len(&gs, 0), 6);
 
         gs.players[0].hand[0] = Card { value: 1, suit: Suit::Hearts, deck: DeckColor::Red };
 
-        assert_eq!(gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(0), placed_card: card(1) }, Some(vec![]))));
+        let result = gs
+            .apply_move(PlayerIdx(0), Action::OpenScale {
+                hand_idx: HandIdx(0),
+            })
+            .unwrap();
+
+        assert_eq!(
+            result.success,
+            MoveSuccess::ScaleOpened {
+                scale_id: ScaleIdx(0),
+                placed_card: card(1),
+            }
+        );
+
+        assert_eq!(result.drawn_cards, Some(vec![]));
+        assert_eq!(result.discarded_cards, None);
+
         assert_eq!(hand_len(&gs, 0), 5);
         assert_eq!(gs.scale_manager.scales.len(), 8);
 
-        gs.players[0].hand[0] = Card { value: 2, suit: Suit::Hearts, deck: DeckColor::Red };
-        assert_eq!(gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(0) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, Some(vec![]))));
+        gs.players[0].hand[0] = Card {
+            value: 2,
+            suit: Suit::Hearts,
+            deck: DeckColor::Red,
+        };
+
+        let result = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::PlayHand {
+                    hand_idx: HandIdx(0),
+                    scale_idx: ScaleIdx(0),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.success,
+            MoveSuccess::ScalePlaced {
+                scale_id: ScaleIdx(0),
+                completed: false,
+                placed_card: card(2),
+            }
+        );
+
+        assert_eq!(result.drawn_cards, Some(vec![]));
+        assert_eq!(result.discarded_cards, None);
+
         assert_eq!(hand_len(&gs, 0), 4);
 
-        assert_eq!(gs.apply_move(PlayerIdx(0), Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(0) }), Ok((MoveSuccess::TurnEnded, None)));
+        let result = gs
+            .apply_move(
+                PlayerIdx(0),
+                Action::MoveToSide {
+                    hand_idx: HandIdx(0),
+                    stack_idx: StackIdx(0),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.success, MoveSuccess::TurnEnded);
+        assert!(result.drawn_cards.is_none());
+        assert!(result.discarded_cards.is_none());
+
         assert_eq!(gs.current_turn, PlayerIdx(1));
         assert_eq!(gs.turn_phase, TurnPhase::Draw);
         assert_eq!(gs.players[0].side[0].len(), 1);
         assert_eq!(hand_len(&gs, 0), 3);
 
         // Turn 2: Player 1
-        let result = gs.apply_move(PlayerIdx(1), Action::Draw);
-        let result_copy = result.clone().unwrap();
-        assert_eq!(result, Ok((MoveSuccess::Success, result_copy.1)));
+        let result = gs.apply_move(PlayerIdx(1), Action::Draw).unwrap();
+        assert_eq!(result.success, MoveSuccess::Success);
+        assert!(result.drawn_cards.is_some());
         assert_eq!(hand_len(&gs, 1), 6);
 
-        gs.players[1].hand[0] = Card { value: 1, suit: Suit::Hearts, deck: DeckColor::Red };
-        assert_eq!(gs.apply_move(PlayerIdx(1), Action::OpenScale { hand_idx: HandIdx(0) }), Ok((MoveSuccess::ScaleOpened { scale_id: ScaleIdx(1), placed_card: card(1) }, Some(vec![]))));
+        gs.players[1].hand[0] = Card {
+            value: 1,
+            suit: Suit::Hearts,
+            deck: DeckColor::Red,
+        };
+
+        assert_eq!(
+            gs.apply_move(
+                PlayerIdx(1),
+                Action::OpenScale {
+                    hand_idx: HandIdx(0),
+                },
+            ),
+            Ok(MoveResult {
+                success: MoveSuccess::ScaleOpened {
+                    scale_id: ScaleIdx(1),
+                    placed_card: card(1),
+                },
+                drawn_cards: Some(vec![]),
+                discarded_cards: None,
+            })
+        );
+
         assert_eq!(hand_len(&gs, 1), 5);
 
-        gs.players[1].hand[0] = Card { value: 2, suit: Suit::Hearts, deck: DeckColor::Red };
-        assert_eq!(gs.apply_move(PlayerIdx(1), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(1) }), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false, placed_card: card(2) }, Some(vec![]))));
+        gs.players[1].hand[0] = Card {
+            value: 2,
+            suit: Suit::Hearts,
+            deck: DeckColor::Red,
+        };
+
+        assert_eq!(
+            gs.apply_move(
+                PlayerIdx(1),
+                Action::PlayHand {
+                    hand_idx: HandIdx(0),
+                    scale_idx: ScaleIdx(1),
+                },
+            ),
+            Ok(MoveResult {
+                success: MoveSuccess::ScalePlaced {
+                    scale_id: ScaleIdx(1),
+                    completed: false,
+                    placed_card: card(2),
+                },
+                drawn_cards: Some(vec![]),
+                discarded_cards: None,
+            })
+        );
+
         assert_eq!(hand_len(&gs, 1), 4);
     }
 

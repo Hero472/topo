@@ -32,22 +32,35 @@ impl ScaleManager {
         &mut self,
         scale_id: ScaleIdx,
         card: Card,
-    ) -> Result<MoveSuccess, MoveError> {
+    ) -> Result<(MoveSuccess, Option<Vec<Card>>), MoveError> {
         let idx = scale_id.as_usize();
+
         if idx >= MAX_SCALES {
             return Err(MoveError::DoesNotFit);
         }
+
         let scale = self.scales[idx].as_mut().ok_or(MoveError::DoesNotFit)?;
         if !scale.accepts(&card) {
             return Err(MoveError::DoesNotFit);
         }
+
         scale.push(card)?;
         let completed = scale.is_complete();
-        if completed {
-            // Free the slot immediately – scale is done.
-            self.scales[idx] = None;
-        }
-        Ok(MoveSuccess::ScalePlaced { scale_id, completed, placed_card: card })
+
+        let discarded_cards = if completed {
+            let scale = self.scales[idx].take().unwrap();
+            Some(scale.cards)
+        } else {
+            None
+        };
+
+        let success = MoveSuccess::ScalePlaced {
+            scale_id,
+            completed,
+            placed_card: card,
+        };
+
+        Ok((success, discarded_cards))
     }
 
     /// Player wants to open a new scale (usually with an Ace).
@@ -149,7 +162,7 @@ mod tests {
         let mut mgr = ScaleManager::new();
         let _ = mgr.open_scale(card(1)); // scale 0 has Ace
         let result = mgr.place_on_scale(ScaleIdx(0), card(2));
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(2) }, None)));
         assert_eq!(mgr.scales[0].clone().unwrap().cards.len(), 2);
         assert_eq!(mgr.scales[0].clone().unwrap().cards[1].value, 2);
     }
@@ -174,8 +187,8 @@ mod tests {
         let _ = mgr.open_scale(card(1)); // scale 0: Ace
         let _ = mgr.open_scale(card(1)); // scale 1: Ace
         // Place a 2 on scale 1, not scale 0
-        let result = mgr.place_on_scale(ScaleIdx(1), card(2));
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false, placed_card: card(2) }));
+        let result: Result<(MoveSuccess, Option<Vec<Card>>), MoveError> = mgr.place_on_scale(ScaleIdx(1), card(2));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(1), completed: false, placed_card: card(2) }, None)));
         assert_eq!(mgr.scales[0].clone().unwrap().cards.len(), 1); // still only Ace
         assert_eq!(mgr.scales[1].clone().unwrap().cards.len(), 2); // Ace + 2
     }
@@ -188,12 +201,12 @@ mod tests {
         for v in 2..=11 {
             assert_eq!(
                 mgr.place_on_scale(ScaleIdx(0), card(v)),
-                Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(v) })
+                Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(v)}, None))
             );
         }
         // Queen (12) should complete the scale
         let result = mgr.place_on_scale(ScaleIdx(0), card(12));
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: true, placed_card: card(12) }));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: true, placed_card: card(12) }, result.clone().unwrap().1)));
         assert!(mgr.scales[0].clone().is_none());
     }
 
@@ -219,10 +232,10 @@ mod tests {
         // Place a 2, then a King as wildcard 3
         let _ = mgr.place_on_scale(ScaleIdx(0), card(2));
         let result = mgr.place_on_scale(ScaleIdx(0), card(13)); // should be allowed
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(13) }));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(13)}, None)));
         // Now the scale expects 4 (since length is 3: Ace,2,King)
         // Verify that placing 4 works
-        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(4)), Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(4) }));
+        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(4)), Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(4) }, None)));
     }
 
     #[test]
@@ -230,7 +243,7 @@ mod tests {
         let mut mgr = ScaleManager::new();
         let _ = mgr.open_scale(card(1));
         let result = mgr.place_on_scale(ScaleIdx(0), card(13));
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(13) }));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: false, placed_card: card(13)}, None)));
     }
 
     #[test]
@@ -252,7 +265,7 @@ mod tests {
         }
         // place King as 12th card -> completes
         let result = mgr.place_on_scale(ScaleIdx(0), card(13));
-        assert_eq!(result, Ok(MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: true, placed_card: card(13) }));
+        assert_eq!(result, Ok((MoveSuccess::ScalePlaced { scale_id: ScaleIdx(0), completed: true, placed_card: card(13) }, result.clone().unwrap().1)));
     }
 
     // ---------- reset ----------

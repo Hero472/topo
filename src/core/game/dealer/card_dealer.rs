@@ -1,9 +1,11 @@
 use crate::core::game::{card::Card, deck::deck::Deck, state::state_types::Seed};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CardDealer {
     pub draw_pile: Deck,
     pub discard_pile: Vec<Card>,
+    seed: Seed,
+    recycle_count: usize
 }
 
 impl CardDealer {
@@ -13,6 +15,8 @@ impl CardDealer {
         Self {
             draw_pile,
             discard_pile: vec![],
+            seed,
+            recycle_count: 0
         }
     }
 
@@ -69,8 +73,14 @@ impl CardDealer {
 
     fn maybe_recycle(&mut self) {
         if self.draw_pile.remaining() <= 10 && !self.discard_pile.is_empty() {
-            let cards: Vec<Card> = self.discard_pile.drain(..).collect();
-            self.draw_pile.add_bottom(cards);
+            let shuffle_seed = self.seed.as_usize() as u64 ^ self.recycle_count as u64;
+            self.recycle_count += 1;
+
+            let mut recycled = Deck {
+                cards: self.discard_pile.drain(..).collect(),
+            };
+            recycled.shuffle_with_seed(shuffle_seed);
+            self.draw_pile.add_bottom(recycled.cards);
         }
     }
 }
@@ -265,6 +275,42 @@ mod tests {
         let cards1: Vec<_> = (0..10).map(|_| dealer1.draw_one().unwrap()).collect();
         let cards2: Vec<_> = (0..10).map(|_| dealer2.draw_one().unwrap()).collect();
         assert_ne!(cards1, cards2);
+    }
+
+    #[test]
+    fn recycled_cards_are_drawn_after_original_draw_pile() {
+        let mut dealer = CardDealer::new(Seed(0));
+
+        // Leave exactly one card in the draw pile.
+        while dealer.remaining() > 1 {
+            dealer.draw_one();
+        }
+
+        let last_original = dealer.peek().cloned().unwrap();
+
+        let recycled = vec![test_card(1), test_card(2), test_card(3)];
+        dealer.return_to_discard(recycled.clone());
+
+        // Still draw the last original card first.
+        assert_eq!(dealer.draw_one(), Some(last_original));
+
+        // Collect everything that was recycled.
+        let mut drawn = Vec::new();
+        while let Some(card) = dealer.draw_one() {
+            drawn.push(card);
+        }
+
+        assert!(dealer.discard_pile.is_empty());
+        assert_eq!(drawn.len(), recycled.len());
+
+        // Ignore shuffle order.
+        let mut drawn_values: Vec<_> = drawn.iter().map(|c| c.value).collect();
+        let mut expected_values: Vec<_> = recycled.iter().map(|c| c.value).collect();
+
+        drawn_values.sort();
+        expected_values.sort();
+
+        assert_eq!(drawn_values, expected_values);
     }
 
 }

@@ -113,35 +113,57 @@ pub fn generate_events(
             }
         }
         PlayHand { .. } | PlayPersonal { .. } | PlaySide { .. } => {
-            if let MoveSuccess::ScalePlaced { scale_id, completed, placed_card } = result {
-                events.push(ServerEvent::CardPlayedOnScale {
-                    player_id,
-                    player_idx,
-                    card: *placed_card,
-                    scale_idx: *scale_id,
-                    completed: *completed,
-                });
-                events.push(opponent_update(state, player_id, player_idx));
-
-                if *completed {
-                    events.push(ServerEvent::ScaleCompleted {
+            match result {
+                MoveSuccess::ScalePlaced {
+                    scale_id,
+                    completed,
+                    placed_card,
+                } => {
+                    events.push(ServerEvent::CardPlayedOnScale {
+                        player_id,
+                        player_idx,
+                        card: *placed_card,
                         scale_idx: *scale_id,
-                        by_player_id: player_id,
-                        by_player_idx: player_idx,
+                        completed: *completed,
                     });
-                }
 
-                if matches!(action, PlayPersonal { .. }) {
-                    if let Some(board) = state.player(player_idx) {
-                        events.push(ServerEvent::PersonalPileUpdated {
-                            player_id,
-                            player_idx,
-                            count: board.personal.len(),
-                            top: board.personal_top().cloned(),
+                    if *completed {
+                        events.push(ServerEvent::ScaleCompleted {
+                            scale_idx: *scale_id,
+                            by_player_id: player_id,
+                            by_player_idx: player_idx,
                         });
                     }
                 }
+
+                MoveSuccess::ScaleOpened {
+                    scale_id,
+                    placed_card,
+                } => {
+                    events.push(ServerEvent::CardPlayedOnScale {
+                        player_id,
+                        player_idx,
+                        card: *placed_card,
+                        scale_idx: *scale_id,
+                        completed: false,
+                    });
+                }
+
+                _ => {}
             }
+
+            if matches!(action, PlayPersonal { .. }) {
+                if let Some(board) = state.player(player_idx) {
+                    events.push(ServerEvent::PersonalPileUpdated {
+                        player_id,
+                        player_idx,
+                        count: board.personal.len(),
+                        top: board.personal_top().cloned(),
+                    });
+                }
+            }
+
+            events.push(opponent_update(state, player_id, player_idx));
         }
         MoveToSide { stack_idx, .. } => {
             let card = state
@@ -187,7 +209,7 @@ pub fn generate_events(
 
     if let MoveSuccess::GameWon { winner_idx } = result {
         events.push(ServerEvent::GameOver {
-            winner_id: player_id,       // the acting player is the winner
+            winner_id: player_id,
             winner_idx: *winner_idx,
             reason: "All cards cleared".into(),
         });

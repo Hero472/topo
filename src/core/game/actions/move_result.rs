@@ -4,11 +4,19 @@ use crate::core::{game::card::Card, game_index::ScaleIdx, player::PlayerIdx};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+pub struct MoveResult {
+    pub success: MoveSuccess,
+    pub drawn_cards: Option<Vec<Card>>,
+    pub discarded_cards: Option<Vec<Card>>, 
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum MoveSuccess {
     ScalePlaced { 
         scale_id: ScaleIdx,
         completed: bool,
-        placed_card: Card
+        placed_card: Card,
     },
     ScaleOpened { scale_id: ScaleIdx, placed_card: Card },
     Success,
@@ -80,7 +88,7 @@ mod tests {
 
     #[test]
     fn move_success_scale_placed_roundtrip() {
-        let original = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(3), completed: true, placed_card: card() };
+        let original = MoveSuccess::ScalePlaced { scale_id: ScaleIdx(3), completed: true, placed_card: card()};
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: MoveSuccess = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);
