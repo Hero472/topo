@@ -147,7 +147,7 @@ impl GameState {
         self.scale_manager.reset();
         self.phase = GamePhase::Playing;
         self.turn_phase = TurnPhase::Draw;
-        self.current_turn = PlayerIdx(0);
+        self.current_turn = PlayerIdx(rand::random_range(0..1));
     }
 
     // ── Turn & phase helpers ──────────────────────────────────
