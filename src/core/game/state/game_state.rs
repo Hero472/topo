@@ -147,7 +147,7 @@ impl GameState {
         self.scale_manager.reset();
         self.phase = GamePhase::Playing;
         self.turn_phase = TurnPhase::Draw;
-        self.current_turn = PlayerIdx(rand::random_range(0..1));
+        self.current_turn = PlayerIdx(rand::random_range(0..=1));
     }
 
     // ── Turn & phase helpers ──────────────────────────────────
@@ -533,7 +533,9 @@ mod tests {
 
     #[test]
     fn start_game_deals_cards() {
-        let gs = make_game();
+        let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         for p in &gs.players {
             assert_eq!(p.personal.len(), 13);
             assert_eq!(p.hand.len(), 5);
@@ -671,6 +673,8 @@ mod tests {
     #[test]
     fn not_your_turn_rejected() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let result = gs.apply_move(PlayerIdx(1), Action::Draw);
         assert_eq!(result, Err(MoveError::NotYourTurn));
     }
@@ -687,6 +691,8 @@ mod tests {
     #[test]
     fn draw_in_draw_phase_works() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let player_idx = current_turn_player(&gs);
         let initial_hand = hand_len(&gs, 0);
         let result = gs.apply_move(player_idx, Action::Draw);
@@ -715,6 +721,8 @@ mod tests {
     #[test]
     fn draw_with_empty_deck_still_succeeds() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         while gs.card_dealer.remaining() > 0 {
             gs.card_dealer.draw_one();
         }
@@ -729,6 +737,8 @@ mod tests {
     #[test]
     fn open_scale_with_ace() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 1, deck: DeckColor::Red };
         let hand_size_before = hand_len(&gs, 0);
@@ -751,6 +761,8 @@ mod tests {
     #[test]
     fn open_scale_with_non_ace_rejected() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 5, deck: DeckColor::Red };
         let result = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
@@ -801,6 +813,7 @@ mod tests {
     #[test]
     fn play_hand_valid() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
 
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
 
@@ -837,6 +850,8 @@ mod tests {
     #[test]
     fn play_hand_invalid_scale() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         let result = gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(99) });
         assert_eq!(result, Err(MoveError::DoesNotFit));
@@ -863,6 +878,8 @@ mod tests {
     #[test]
     fn play_personal_to_scale() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].personal[12] = Card {
             suit: Suit::Hearts,
@@ -892,6 +909,8 @@ mod tests {
     #[test]
     fn play_side_to_scale() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].side[0].push(card(2));
         let mut scale = Scale::new(ScaleIdx(0));
@@ -917,6 +936,8 @@ mod tests {
     #[test]
     fn move_to_side_ends_turn() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
 
         assert_eq!(result.success, MoveSuccess::Success);
@@ -948,6 +969,8 @@ mod tests {
     #[test]
     fn move_king_from_personal_to_side() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
         assert_eq!(result.success, MoveSuccess::Success);
 
@@ -979,6 +1002,8 @@ mod tests {
     #[test]
     fn move_non_king_from_personal_rejected() {
         let mut gs = make_game();
+
+        gs.current_turn = PlayerIdx(0);
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         let card = Card { value: 5, ..gs.players[0].personal[0] };
         gs.players[0].personal.clear();
@@ -991,6 +1016,8 @@ mod tests {
     #[test]
     fn win_on_move_to_side_when_both_piles_empty() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].personal.clear();
         gs.players[0].hand = vec![Card { value: 2, ..gs.players[0].hand[0] }];
@@ -1021,6 +1048,7 @@ mod tests {
     #[test]
     fn refill_hand() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
 
         let MoveResult {
             success: res,
@@ -1075,6 +1103,7 @@ mod tests {
     #[test]
     fn simulated_game_partial() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
 
         // Turn 1: Player 0
         let result = gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
@@ -1216,6 +1245,8 @@ mod tests {
     #[test]
     fn current_player_idx_returns_current_turn() {
         let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
+
         assert_eq!(gs.current_player_idx(), Some(PlayerIdx(0)));
         gs.apply_move(PlayerIdx(0), Action::Draw).unwrap();
         gs.apply_move(PlayerIdx(0), Action::MoveToSide { hand_idx: HandIdx(0), stack_idx: StackIdx(0) }).unwrap();
@@ -1224,7 +1255,8 @@ mod tests {
 
     #[test]
     fn current_player_id_returns_correct_id() {
-        let gs = make_game();
+        let mut gs = make_game();
+        gs.current_turn = PlayerIdx(0);
         // This method now returns Option<PlayerIdx>
         assert_eq!(gs.current_player_idx(), Some(PlayerIdx(0)));
     }

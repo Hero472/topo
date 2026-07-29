@@ -69,6 +69,7 @@ pub fn process_action(
     let acting_player_idx = players[&acting_player_id].player_idx;
 
     let events = generate_events(
+        players,
         state,
         action,
         result,
@@ -88,6 +89,7 @@ pub fn process_action(
 }
 
 pub fn generate_events(
+    players: &HashMap<PlayerId, PlayerInfo>,
     state: &GameState,
     action: &Action,
     result: &MoveSuccess,
@@ -99,7 +101,7 @@ pub fn generate_events(
     let mut events = Vec::new();
 
     match action {
-        Draw => {/* does nothing */}
+        Draw => {}
         OpenScale { .. } => {
             if let MoveSuccess::ScaleOpened { scale_id, placed_card } = result {
                 events.push(ServerEvent::CardPlayedOnScale {
@@ -109,7 +111,10 @@ pub fn generate_events(
                     scale_idx: *scale_id,
                     completed: false,
                 });
-                events.push(opponent_update(state, player_id, player_idx));
+
+                if let Some(event) = opponent_update(players, state, player_idx) {
+                    events.push(event);
+                }
             }
         }
         PlayHand { .. } | PlayPersonal { .. } | PlaySide { .. } => {
@@ -148,7 +153,6 @@ pub fn generate_events(
                         completed: false,
                     });
                 }
-
                 _ => {}
             }
 
@@ -163,7 +167,9 @@ pub fn generate_events(
                 }
             }
 
-            events.push(opponent_update(state, player_id, player_idx));
+            if let Some(event) = opponent_update(players, state, player_idx) {
+                events.push(event);
+            }
         }
         MoveToSide { stack_idx, .. } => {
             let card = state
@@ -177,7 +183,10 @@ pub fn generate_events(
                     stack_idx: *stack_idx,
                 });
             }
-            events.push(opponent_update(state, player_id, player_idx));
+
+            if let Some(event) = opponent_update(players, state, player_idx) {
+                events.push(event);
+            }
         }
         MovePersonalToSide { stack_idx } => {
             if matches!(result, MoveSuccess::Success) {
@@ -202,7 +211,9 @@ pub fn generate_events(
                     });
                 }
 
-                events.push(opponent_update(state, player_id, player_idx));
+                if let Some(event) = opponent_update(players, state, player_idx) {
+                    events.push(event);
+                }
             }
         }
     }
@@ -225,29 +236,24 @@ pub fn generate_events(
 }
 
 fn opponent_update(
+    players: &HashMap<PlayerId, PlayerInfo>,
     state: &GameState,
-    acting_player_id: PlayerId,
     acting_player_idx: PlayerIdx,
-) -> ServerEvent {
-    // Find opponent's board
-    let opponent = state.players.iter().find(|p| p.player_idx != acting_player_idx);
-    if let Some(o) = opponent {
-        ServerEvent::OpponentUpdate {
-            player_id: acting_player_id,
-            player_idx: o.player_idx,
-            personal_count: o.personal.len(),
-            personal_top: o.personal_top().cloned(),
-            side: o.side.clone(),
-        }
-    } else {
-        ServerEvent::OpponentUpdate {
-            player_id: acting_player_id,
-            player_idx: PlayerIdx(0),
-            personal_count: 0,
-            personal_top: None,
-            side: [vec![], vec![], vec![], vec![]],
-        }
-    }
+) -> Option<ServerEvent> {
+    let acting_board = state.player(acting_player_idx)?;
+
+    let opponent_id = players
+        .iter()
+        .find(|(_, info)| info.player_idx != acting_player_idx)
+        .map(|(id, _)| *id)?;
+
+    Some(ServerEvent::OpponentUpdate {
+        player_id: opponent_id,
+        player_idx: acting_player_idx,
+        personal_count: acting_board.personal.len(),
+        personal_top: acting_board.personal_top().cloned(),
+        side: acting_board.side.clone(),
+    })
 }
 
 pub fn start_timer(

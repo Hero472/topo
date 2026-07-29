@@ -98,11 +98,11 @@ impl RoomPhase for PlayingPhase {
                     token.cancel();
                 }
 
-                if drawn_cards.is_some() {
+                if let Some(drawn_cards) = drawn_cards {
                     send_to(players, player_id, ServerEvent::HandRefill {
                         player_id,
                         player_idx,
-                        cards: drawn_cards.unwrap(), // we know is Some OFC
+                        cards: drawn_cards,
                     });
                 }
 
