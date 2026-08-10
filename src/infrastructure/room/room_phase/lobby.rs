@@ -94,7 +94,7 @@ impl RoomPhase for LobbyPhase {
                         13,
                         5,
                     );
-                    new_state.start_game();
+                    new_state.start_game(); // Player IDx starter can be either 0 or 1
 
                     for (&pid, pinfo) in players.iter() {
                         if let Some(board) = new_state
@@ -106,7 +106,8 @@ impl RoomPhase for LobbyPhase {
                         }
                     }
 
-                    let starter_idx = PlayerIdx(0);
+                    let starter_idx = new_state.current_turn;
+                    
                     let starter_id = players
                         .iter()
                         .find(|(_, pinfo)| pinfo.player_idx == starter_idx)

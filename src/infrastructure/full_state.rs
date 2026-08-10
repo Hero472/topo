@@ -40,7 +40,7 @@ pub fn build_full_state(
         .map(|opp| OpponentView {
             player_idx: opp.player_idx,
             username: opponent_username,
-            hand_count: opp.hand_len(),
+            hand: opp.hand.iter().map(|card| card.dummy_card()).collect(),
             personal_count: opp.personal.len(),
             personal_top: opp.personal_top().cloned(),
             side: opp.side.clone(),
@@ -48,7 +48,7 @@ pub fn build_full_state(
         .unwrap_or_else(|| OpponentView {
             player_idx: PlayerIdx(0),
             username: String::new(),
-            hand_count: 5,
+            hand: vec![],
             personal_count: 0,
             personal_top: None,
             side: [vec![], vec![], vec![], vec![]],
@@ -196,7 +196,7 @@ use crate::core::player::PlayerId;
 
             assert_eq!(opponent.player_idx, PlayerIdx(2));
             assert_eq!(opponent.username, "Alice");
-            assert_eq!(opponent.hand_count, 0);
+            assert_eq!(opponent.hand.len(), 0);
             assert_eq!(opponent.personal_count, 0);
             assert_eq!(opponent.personal_top, None);
 
@@ -282,7 +282,7 @@ use crate::core::player::PlayerId;
         if let Some(ServerEvent::FullState { opponent, .. }) = result {
             assert_eq!(opponent.player_idx, PlayerIdx(0)); // default placeholder
             assert_eq!(opponent.username, String::new());
-            assert_eq!(opponent.hand_count, 5);
+            assert_eq!(opponent.hand.len(), 5);
             assert_eq!(opponent.personal_count, 0);
             assert_eq!(opponent.personal_top, None);
             assert_eq!(opponent.side, [vec![], vec![], vec![], vec![]]);

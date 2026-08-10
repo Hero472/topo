@@ -19,12 +19,15 @@ impl ScaleManager {
 
     pub fn can_place_on_scale(&self, scale_id: ScaleIdx, card: &Card) -> bool {
         let idx = scale_id.as_usize();
+
         if idx >= MAX_SCALES {
             return false;
         }
+
         match self.scales.get(idx) {
             Some(Some(scale)) => scale.accepts(card),
-            _ => false,
+            Some(None) => card.value == 1,
+            None => false,
         }
     }
     /// Player wants to place a card on an existing scale.
@@ -39,12 +42,28 @@ impl ScaleManager {
             return Err(MoveError::DoesNotFit);
         }
 
-        let scale = self.scales[idx].as_mut().ok_or(MoveError::DoesNotFit)?;
-        if !scale.accepts(&card) {
-            return Err(MoveError::DoesNotFit);
+        if self.scales[idx].is_none() {
+            if card.value != 1 {
+                return Err(MoveError::DoesNotFit);
+            }
+
+            let mut scale = Scale::new(ScaleIdx(idx));
+            scale.push(card)?;
+
+            self.scales[idx] = Some(scale);
+
+            return Ok((
+                MoveSuccess::ScaleOpened {
+                    scale_id,
+                    placed_card: card,
+                },
+                None,
+            ));
         }
 
+        let scale = self.scales[idx].as_mut().unwrap();
         scale.push(card)?;
+
         let completed = scale.is_complete();
 
         let discarded_cards = if completed {
@@ -211,15 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn place_on_completed_scale_fails() {
+    fn place_on_completed_scale_open_scale() {
         let mut mgr = ScaleManager::new();
-        let _ = mgr.open_scale(card(1));
+        mgr.open_scale(card(1)).unwrap();
+
         for v in 2..=12 {
-            let _ = mgr.place_on_scale(ScaleIdx(0), card(v));
+            mgr.place_on_scale(ScaleIdx(0), card(v)).unwrap();
         }
-        assert!(mgr.scales[0].clone().is_none());
-        // try to place anything
-        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(1)), Err(MoveError::DoesNotFit));
+
+        assert!(mgr.scales[0].is_none());
+
+        assert!(matches!(mgr.place_on_scale(ScaleIdx(0), card(1)), Ok((MoveSuccess::ScaleOpened { .. }, None))));
+
         assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(5)), Err(MoveError::DoesNotFit));
     }
 

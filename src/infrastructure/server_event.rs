@@ -78,6 +78,7 @@ pub enum ServerEvent {
         player_idx: PlayerIdx,
         personal_count: usize,
         personal_top: Option<Card>,
+        hand: Vec<Card>,
         side: [Vec<Card>; 4],
     },
 
@@ -130,7 +131,7 @@ pub enum ServerEvent {
 pub struct OpponentView {
     pub player_idx: PlayerIdx,
     pub username: String,
-    pub hand_count: usize,
+    pub hand: Vec<Card>,
     pub personal_count: usize,
     pub personal_top: Option<Card>,
     pub side: [Vec<Card>; 4],

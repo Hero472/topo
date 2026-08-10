@@ -101,7 +101,11 @@ pub fn generate_events(
     let mut events = Vec::new();
 
     match action {
-        Draw => {}
+        Draw => {
+            if let Some(event) = opponent_update(players, state, player_idx) {
+                events.push(event);
+            }
+        }
         OpenScale { .. } => {
             if let MoveSuccess::ScaleOpened { scale_id, placed_card } = result {
                 events.push(ServerEvent::CardPlayedOnScale {
@@ -251,6 +255,7 @@ fn opponent_update(
         player_id: opponent_id,
         player_idx: acting_player_idx,
         personal_count: acting_board.personal.len(),
+        hand: acting_board.hand.iter().map(|card| {card.dummy_card()}).collect(),
         personal_top: acting_board.personal_top().cloned(),
         side: acting_board.side.clone(),
     })

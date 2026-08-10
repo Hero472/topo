@@ -29,6 +29,14 @@ impl Card {
             _ => unreachable!(),
         }
     }
+
+    pub fn dummy_card(&self) -> Card {
+        Card {
+            suit: Suit::Diamonds,
+            value: 0,
+            deck: self.deck
+        }
+    }
 }
 
 #[cfg(test)]
