@@ -9,6 +9,10 @@ pub struct Deck {
 
 impl Deck {
 
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Card> {
+        self.cards.iter()
+    }
+
     pub fn new_with_colors(colors: &[DeckColor]) -> Self {
         let suit_count = 4;
         let values_per_suit = 13;

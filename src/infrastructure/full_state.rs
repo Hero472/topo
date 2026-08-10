@@ -1,31 +1,35 @@
 use crate::{
-    core::{game::{deck::DeckColor, state::GameState}, player::PlayerIdx},
+    core::{game::state::GameState, player::PlayerIdx},
     infrastructure::{
         server_event::{OpponentView, ServerEvent},
         views::{PersonalPileView, PlayerBoardView}
     }
 };
 
+const PERSONAL_PREVIEW_SIZE: usize = 7;
+const DEALER_PREVIEW_SIZE: usize = 7;
+
 pub fn build_full_state(
     game_state: &GameState,
     player_idx: PlayerIdx,
     opponent_username: String,
 ) -> Option<ServerEvent> {
-    let your_board = game_state.players.iter()
+    let your_board = game_state
+        .players
+        .iter()
         .find(|p| p.player_idx == player_idx)?;
 
-    let personal_count = your_board.personal.len();
-    let personal_top = your_board.personal_top().cloned();
-
-    let colors: Vec<DeckColor> = your_board.personal.iter()
-        .rev()                              // top is now first
-        .map(|card| card.deck)
-        .collect();
-
     let personal_view = PersonalPileView {
-        count: personal_count,
-        top: personal_top,
-        colors,
+        count: your_board.personal.len(),
+        top: your_board.personal_top().cloned(),
+        colors: your_board
+            .personal
+            .iter()
+            .rev()
+            .skip(1)
+            .take(PERSONAL_PREVIEW_SIZE)
+            .map(|card| card.deck)
+            .collect(),
     };
 
     let your_board_view = PlayerBoardView {
@@ -35,12 +39,18 @@ pub fn build_full_state(
         hand: your_board.hand.clone(),
     };
 
-    let opponent = game_state.players.iter()
+    let opponent = game_state
+        .players
+        .iter()
         .find(|p| p.player_idx != player_idx)
         .map(|opp| OpponentView {
             player_idx: opp.player_idx,
             username: opponent_username,
-            hand: opp.hand.iter().map(|card| card.dummy_card()).collect(),
+            hand: opp
+                .hand
+                .iter()
+                .map(|card| card.dummy_card())
+                .collect(),
             personal_count: opp.personal.len(),
             personal_top: opp.personal_top().cloned(),
             side: opp.side.clone(),
@@ -54,10 +64,18 @@ pub fn build_full_state(
             side: [vec![], vec![], vec![], vec![]],
         });
 
-    let draw_top = game_state.card_dealer.peek().clone();
-    let color_top = draw_top.map(|card| card.deck);
+    let dealer_preview = game_state
+        .card_dealer
+        .draw_pile
+        .iter()
+        .rev()
+        .take(DEALER_PREVIEW_SIZE)
+        .map(|card| card.deck)
+        .collect();
 
-    let scales = game_state.scale_manager.scales
+    let scales = game_state
+        .scale_manager
+        .scales
         .iter()
         .map(|opt| opt.clone())
         .collect();
@@ -68,10 +86,11 @@ pub fn build_full_state(
             .players
             .get(game_state.current_turn.as_usize())
             .map(|p| p.player_idx)
-            .unwrap_or(PlayerIdx(0)) == player_idx,
+            .unwrap_or(PlayerIdx(0))
+            == player_idx,
         opponent,
         scales,
-        dealer_top: color_top,
+        dealer_preview,
         dealer_count: game_state.card_dealer.draw_pile.remaining(),
         turn_seconds_remaining: game_state.turn_seconds,
     })
@@ -178,7 +197,7 @@ use crate::core::player::PlayerId;
             your_board,
             your_turn,
             opponent,
-            dealer_top,
+            dealer_preview,
             dealer_count,
             turn_seconds_remaining,
             ..
@@ -200,7 +219,7 @@ use crate::core::player::PlayerId;
             assert_eq!(opponent.personal_count, 0);
             assert_eq!(opponent.personal_top, None);
 
-            assert_eq!(dealer_top, Some(DeckColor::Blue));
+            assert_eq!(dealer_preview, vec![DeckColor::Blue]);
             assert_eq!(dealer_count, 15);
             assert_eq!(turn_seconds_remaining, Seconds(42));
         } else {
@@ -260,8 +279,8 @@ use crate::core::player::PlayerId;
             Seconds(10),
         );
         let result = build_full_state(&state, PlayerIdx(1), "Dave".to_string());
-        if let Some(ServerEvent::FullState { dealer_top, .. }) = result {
-            assert_eq!(dealer_top, None);
+        if let Some(ServerEvent::FullState { dealer_preview, .. }) = result {
+            assert_eq!(dealer_preview, vec![]);
         } else {
             panic!("Expected FullState");
         }

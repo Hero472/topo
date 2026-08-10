@@ -6,16 +6,29 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     core::{
-        game::{actions::{Action, MoveSuccess}, state::{GameState, Seconds}},
-        player::{PlayerId, PlayerIdx}
-    }, 
-    infrastructure::{
-        full_state::build_full_state, 
-        message::GameMessage, 
-        room::{player_info::PlayerInfo, room_command::RoomCommand},
-        server_event::ServerEvent
+        game::{actions::{Action, MoveSuccess}, board::PlayerBoard, card::Card, state::{GameState, Seconds}}, player::{PlayerId, PlayerIdx}
+    }, infrastructure::{
+        full_state::build_full_state, message::GameMessage, room::{player_info::PlayerInfo, room_command::RoomCommand}, server_event::ServerEvent, views::PersonalPileView
     }
 };
+
+// repeated const in full_state.rs
+const PERSONAL_PREVIEW_SIZE: usize = 7;
+
+fn personal_pile_view(board: &PlayerBoard) -> PersonalPileView {
+    PersonalPileView {
+        count: board.personal.len(),
+        top: board.personal_top().cloned(),
+        colors: board
+            .personal
+            .iter()
+            .rev()
+            .skip(1)
+            .take(PERSONAL_PREVIEW_SIZE)
+            .map(|card| card.deck)
+            .collect(),
+    }
+}
 
 pub fn broadcast(players: &HashMap<PlayerId, PlayerInfo>, event: &ServerEvent) {
     debug!("Broadcasting event: {:?}", event);
@@ -171,8 +184,7 @@ pub fn generate_events(
                     events.push(ServerEvent::PersonalPileUpdated {
                         player_id,
                         player_idx,
-                        count: board.personal.len(),
-                        top: board.personal_top().cloned(),
+                        personal_view: personal_pile_view(board),
                     });
                 }
             }
@@ -215,11 +227,11 @@ pub fn generate_events(
                 }
 
                 if let Some(board) = state.player(player_idx) {
+
                     events.push(ServerEvent::PersonalPileUpdated {
                         player_id,
                         player_idx,
-                        count: board.personal.len(),
-                        top: board.personal_top().cloned(),
+                        personal_view: personal_pile_view(board),
                     });
                 }
 

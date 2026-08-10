@@ -5,10 +5,8 @@ use crate::{
         game::{card::Card, deck::DeckColor, scale::Scale, state::Seconds},
         game_index::{ScaleIdx, StackIdx},
         player::{PlayerId, PlayerIdx}
-    }, 
-    infrastructure::{
-        error::{ErrorCode, ErrorDetails},
-        views::PlayerBoardView
+    }, infrastructure::{
+        error::{ErrorCode, ErrorDetails}, views::{PersonalPileView, PlayerBoardView}
     }
 };
 
@@ -45,8 +43,7 @@ pub enum ServerEvent {
     PersonalPileUpdated {
         player_id: PlayerId,
         player_idx: PlayerIdx,
-        count: usize,
-        top: Option<Card>,
+        personal_view: PersonalPileView,
     },
 
     // ── Public: a card was placed onto a scale ──
@@ -108,7 +105,7 @@ pub enum ServerEvent {
         your_turn: bool,
         opponent: OpponentView,
         scales: Vec<Option<Scale>>,
-        dealer_top: Option<DeckColor>,
+        dealer_preview: Vec<DeckColor>,
         dealer_count: usize,
         turn_seconds_remaining: Seconds,
     },
