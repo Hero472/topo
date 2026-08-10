@@ -42,7 +42,7 @@ pub async fn ws_handler(
             .or_insert_with(|| {
                 RoomHandle::new_arc(
                     room_id.clone(),
-                    Seconds(240), // here for changing the timer time in seconds, in the future it will be the front who puts the timer
+                    Seconds(180), // here for changing the timer time in seconds, in the future it will be the front who puts the timer
                     state.room_shutdown_tx.clone(),
                 )
             })

@@ -36,6 +36,7 @@ impl GameState {
         seed: Seed,
         personal_count: usize,
         hand_count: usize,
+        turn_seconds: Seconds
     ) -> Self {
         let num_players = 2;
         let mut dealer = CardDealer::new(seed);
@@ -67,7 +68,7 @@ impl GameState {
             scale_manager: ScaleManager::new(),
             current_turn: PlayerIdx(0),
             turn_phase: TurnPhase::Draw,
-            turn_seconds: Seconds(240),
+            turn_seconds,
             play_time: Seconds(0),
             seed,
         }
@@ -492,14 +493,15 @@ mod tests {
             "room".into(),
             Seed(0),
             13,
-            5
+            5,
+            Seconds(30)
         );
         gs.start_game(); // ensure start_game is pub(crate) or use make_game_via_add
         gs
     }
 
     fn empty_game_for_lobby() -> GameState {
-        let mut gs = GameState::new("test".into(), Seed(0), 13, 5);
+        let mut gs = GameState::new("test".into(), Seed(0), 13, 5, Seconds(30));
         gs.players.clear();
         gs.phase = GamePhase::Waiting;
         gs
@@ -524,7 +526,7 @@ mod tests {
     // ── Initialization & player management ───────────────────
     #[test]
     fn new_game_has_two_players_waiting() {
-        let gs = GameState::new("r".into(), Seed(0), 13, 5);
+        let gs = GameState::new("r".into(), Seed(0), 13, 5, Seconds(30));
         assert_eq!(gs.players.len(), 2);
         assert_eq!(gs.phase, GamePhase::Waiting);
         assert_eq!(gs.players[0].player_idx, PlayerIdx(0));

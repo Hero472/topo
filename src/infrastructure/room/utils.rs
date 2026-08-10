@@ -65,6 +65,7 @@ pub fn process_action(
     action: &Action,
     result: &MoveSuccess,
     acting_player_id: PlayerId,
+    turn_seconds_remaining: Seconds
 ) {
     let acting_player_idx = players[&acting_player_id].player_idx;
 
@@ -75,6 +76,7 @@ pub fn process_action(
         result,
         acting_player_id,
         acting_player_idx,
+        turn_seconds_remaining,
         false,
     );
 
@@ -95,6 +97,7 @@ pub fn generate_events(
     result: &MoveSuccess,
     player_id: PlayerId,
     player_idx: PlayerIdx,
+    turn_seconds_remaining: Seconds,
     _is_timeout: bool,
 ) -> Vec<ServerEvent> {
     use Action::*;
@@ -102,7 +105,7 @@ pub fn generate_events(
 
     match action {
         Draw => {
-            if let Some(event) = opponent_update(players, state, player_idx) {
+            if let Some(event) = opponent_update(players, state, player_idx, turn_seconds_remaining) {
                 events.push(event);
             }
         }
@@ -114,9 +117,10 @@ pub fn generate_events(
                     card: *placed_card,
                     scale_idx: *scale_id,
                     completed: false,
+                    turn_seconds_remaining
                 });
 
-                if let Some(event) = opponent_update(players, state, player_idx) {
+                if let Some(event) = opponent_update(players, state, player_idx, turn_seconds_remaining) {
                     events.push(event);
                 }
             }
@@ -134,6 +138,7 @@ pub fn generate_events(
                         card: *placed_card,
                         scale_idx: *scale_id,
                         completed: *completed,
+                        turn_seconds_remaining
                     });
 
                     if *completed {
@@ -155,6 +160,7 @@ pub fn generate_events(
                         card: *placed_card,
                         scale_idx: *scale_id,
                         completed: false,
+                        turn_seconds_remaining
                     });
                 }
                 _ => {}
@@ -171,7 +177,7 @@ pub fn generate_events(
                 }
             }
 
-            if let Some(event) = opponent_update(players, state, player_idx) {
+            if let Some(event) = opponent_update(players, state, player_idx, turn_seconds_remaining) {
                 events.push(event);
             }
         }
@@ -185,10 +191,11 @@ pub fn generate_events(
                     player_idx,
                     card,
                     stack_idx: *stack_idx,
+                    turn_seconds_remaining
                 });
             }
 
-            if let Some(event) = opponent_update(players, state, player_idx) {
+            if let Some(event) = opponent_update(players, state, player_idx, turn_seconds_remaining) {
                 events.push(event);
             }
         }
@@ -203,6 +210,7 @@ pub fn generate_events(
                         player_idx,
                         card,
                         stack_idx: *stack_idx,
+                        turn_seconds_remaining
                     });
                 }
 
@@ -215,7 +223,7 @@ pub fn generate_events(
                     });
                 }
 
-                if let Some(event) = opponent_update(players, state, player_idx) {
+                if let Some(event) = opponent_update(players, state, player_idx, turn_seconds_remaining) {
                     events.push(event);
                 }
             }
@@ -243,6 +251,7 @@ fn opponent_update(
     players: &HashMap<PlayerId, PlayerInfo>,
     state: &GameState,
     acting_player_idx: PlayerIdx,
+    turn_seconds_remaining: Seconds
 ) -> Option<ServerEvent> {
     let acting_board = state.player(acting_player_idx)?;
 
@@ -258,6 +267,7 @@ fn opponent_update(
         hand: acting_board.hand.iter().map(|card| {card.dummy_card()}).collect(),
         personal_top: acting_board.personal_top().cloned(),
         side: acting_board.side.clone(),
+        turn_seconds_remaining
     })
 }
 

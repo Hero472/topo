@@ -38,6 +38,7 @@ pub enum ServerEvent {
         player_id: PlayerId,
         player_idx: PlayerIdx,
         cards: Vec<Card>,
+        turn_seconds_remaining: Seconds,
     },
 
     // ── Public: When personal is used needs to show the next ──
@@ -55,6 +56,7 @@ pub enum ServerEvent {
         card: Card,
         scale_idx: ScaleIdx,
         completed: bool,
+        turn_seconds_remaining: Seconds,
     },
 
     // ── Public: a card was placed onto a side stack ──
@@ -63,6 +65,7 @@ pub enum ServerEvent {
         player_idx: PlayerIdx,
         card: Card,
         stack_idx: StackIdx,
+        turn_seconds_remaining: Seconds,
     },
 
     // ── Public: scale completion notice ──
@@ -80,6 +83,7 @@ pub enum ServerEvent {
         personal_top: Option<Card>,
         hand: Vec<Card>,
         side: [Vec<Card>; 4],
+        turn_seconds_remaining: Seconds,
     },
 
     // ── Turn ended ──
@@ -117,6 +121,7 @@ pub enum ServerEvent {
     PlayerReconnected {
         player_id: PlayerId,
         player_idx: PlayerIdx,
+        turn_seconds_remaining: Seconds,
     },
 
     Error {

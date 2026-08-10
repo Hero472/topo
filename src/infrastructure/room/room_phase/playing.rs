@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::{info, debug, warn};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::core::game::actions::move_result::MoveResult;
 use crate::core::game::actions::{MoveSuccess, MoveError};
@@ -20,10 +20,21 @@ use super::*;
 pub struct PlayingPhase {
     pub room_id: String,
     pub turn_seconds: Seconds,
+    pub turn_started_at: Instant,
     pub disconnect_token: Option<CancellationToken>,
     pub current_player: PlayerIdx,
     pub id_to_idx: HashMap<PlayerId, PlayerIdx>,
     pub idx_to_id: HashMap<PlayerIdx, PlayerId>,
+}
+
+impl PlayingPhase {
+    pub fn turn_seconds_remaining(&self) -> Seconds {
+        let elapsed = Seconds::from(
+            self.turn_started_at.elapsed().as_secs()
+        );
+
+        self.turn_seconds.saturating_sub(elapsed)
+    }
 }
 
 #[async_trait]
@@ -113,10 +124,11 @@ impl RoomPhase for PlayingPhase {
                         player_id,
                         player_idx,
                         cards: drawn_cards,
+                        turn_seconds_remaining: self.turn_seconds_remaining()
                     });
                 }
 
-                process_action(players, game_state, &action, &success, player_id);
+                process_action(players, game_state, &action, &success, player_id, self.turn_seconds_remaining());
 
                 if let MoveSuccess::GameWon { winner_idx } = success {
                     let winner_external = self.idx_to_id[&winner_idx];
@@ -135,6 +147,9 @@ impl RoomPhase for PlayingPhase {
 
                     info!("Turn ended. Next player: {:?} ({:?})", next_id, next_idx);
 
+                    self.current_player = next_idx;
+                    self.turn_started_at = Instant::now();
+
                     broadcast(players, &ServerEvent::TurnEnded {
                         next_player_id: next_id,
                         next_player_idx: next_idx,
@@ -145,7 +160,6 @@ impl RoomPhase for PlayingPhase {
                     send_full_state(players, game_state);
 
                     start_timer(next_id, self.turn_seconds, timer, cmd_tx);
-                    self.current_player = next_idx;
                 } else {
                     // Turn continues
                     start_timer(player_id, self.turn_seconds, timer, cmd_tx);
@@ -280,6 +294,7 @@ impl RoomPhase for PlayingPhase {
                 broadcast(players, &ServerEvent::PlayerReconnected {
                     player_id,
                     player_idx: idx,
+                    turn_seconds_remaining: self.turn_seconds_remaining()
                 });
 
                 // If it's currently this player's turn, restart the turn timer

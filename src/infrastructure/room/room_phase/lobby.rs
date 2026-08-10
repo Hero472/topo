@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use async_trait::async_trait;
 use log::warn;
 use rand::RngExt;
@@ -93,6 +95,7 @@ impl RoomPhase for LobbyPhase {
                         seed,
                         13,
                         5,
+                        self.turn_seconds
                     );
                     new_state.start_game(); // Player IDx starter can be either 0 or 1
 
@@ -145,6 +148,7 @@ impl RoomPhase for LobbyPhase {
                         current_player: starter_idx,
                         id_to_idx,
                         idx_to_id,
+                        turn_started_at: Instant::now()
                     }));
                 }
 

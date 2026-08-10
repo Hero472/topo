@@ -6,8 +6,22 @@ use serde::{Deserialize, Serialize};
 pub struct Seconds(pub u64);
 
 impl Seconds {
-    pub fn as_duration(&self) -> Duration {
+    pub fn as_duration(self) -> Duration {
         Duration::from_secs(self.0)
+    }
+
+    pub fn zero() -> Self {
+        Self(0)
+    }
+
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+}
+
+impl From<u64> for Seconds {
+    fn from(value: u64) -> Self {
+        Self(value)
     }
 }
 
