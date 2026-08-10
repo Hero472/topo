@@ -14,7 +14,7 @@ pub enum RoomCommand {
     /// A player joined the room (or entered the match lobby).
     PlayerJoined {
         player_id: PlayerId,
-        username: String,
+        username: String
     },
 
     /// A player disconnected or left voluntarily.
@@ -33,8 +33,7 @@ pub enum RoomCommand {
     },
 
     PlayerReconnected {
-        player_id: PlayerId,
-        sender: mpsc::UnboundedSender<GameMessage>,
+        player_id: PlayerId
     },
 
     IsPlayerKnown {

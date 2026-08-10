@@ -50,17 +50,11 @@ impl RoomHandle {
     pub fn reconnect_player(
         &self,
         player_id: PlayerId,
-    ) -> Result<mpsc::UnboundedReceiver<GameMessage>, SendError<RoomCommand>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.cmd_tx.send(RoomCommand::PlayerReconnected { player_id, sender: tx })?;
-        Ok(rx)
+    ) -> Result<(), SendError<RoomCommand>> {
+        self.cmd_tx.send(RoomCommand::PlayerReconnected { player_id })
     }
 
-    pub fn add_player(
-        &self,
-        player_id: PlayerId,
-        username: String,
-    ) -> Result<(), SendError<RoomCommand>> {
+    pub fn add_player(&self, player_id: PlayerId, username: String,) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerJoined { player_id, username })
     }
 

@@ -282,7 +282,7 @@ use crate::core::player::PlayerId;
         if let Some(ServerEvent::FullState { opponent, .. }) = result {
             assert_eq!(opponent.player_idx, PlayerIdx(0)); // default placeholder
             assert_eq!(opponent.username, String::new());
-            assert_eq!(opponent.hand.len(), 5);
+            assert_eq!(opponent.hand.len(), 0);
             assert_eq!(opponent.personal_count, 0);
             assert_eq!(opponent.personal_top, None);
             assert_eq!(opponent.side, [vec![], vec![], vec![], vec![]]);

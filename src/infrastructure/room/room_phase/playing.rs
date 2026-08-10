@@ -43,6 +43,16 @@ impl RoomPhase for PlayingPhase {
 
         match cmd {
 
+            RoomCommand::SubscribePlayer { player_id, sender } => {
+                if let Some(info) = players.get_mut(&player_id) {
+                    info.tx = sender;
+                } else {
+                    warn!("SubscribePlayer for unknown player {:?}", player_id);
+                }
+
+                None
+            }
+
             RoomCommand::PlayerAction { player_id, action } => {
                 let player_idx = match self.id_to_idx.get(&player_id) {
                     Some(&idx) => idx,
@@ -237,7 +247,7 @@ impl RoomPhase for PlayingPhase {
                 None
             },
 
-            RoomCommand::PlayerReconnected { player_id, sender } => {
+            RoomCommand::PlayerReconnected { player_id } => {
                 let info = match players.get_mut(&player_id) {
                     Some(info) => info,
                     None => {
@@ -247,14 +257,12 @@ impl RoomPhase for PlayingPhase {
                 };
 
                 if info.connected {
-                    // Already connected – just update the sender in case channel changed
-                    info.tx = sender;
+                    warn!("Player {:?} is already connected", player_id);
                     return None;
                 }
 
                 // Restore connection
                 info.connected = true;
-                info.tx = sender;
 
                 // Cancel disconnect timeout
                 if let Some(token) = self.disconnect_token.take() {
@@ -316,6 +324,12 @@ impl RoomPhase for PlayingPhase {
                 Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())))
             },
             
+            RoomCommand::IsPlayerKnown { player_id, reply } => {
+                let known = players.contains_key(&player_id);
+                let _ = reply.send(known);
+                None
+            }
+
             _ => None,
         }
 

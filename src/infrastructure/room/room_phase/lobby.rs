@@ -173,9 +173,8 @@ impl RoomPhase for LobbyPhase {
                 None
             },
 
-            RoomCommand::PlayerReconnected { player_id, sender } => {
+            RoomCommand::PlayerReconnected { player_id } => {
                 if let Some(info) = players.get_mut(&player_id) {
-                    info.tx = sender;
                     info.connected = true;
                 }
                 None
