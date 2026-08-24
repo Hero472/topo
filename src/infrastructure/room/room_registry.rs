@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 
-use crate::{core::game::state::GameState, infrastructure::room::room_handler::RoomHandle};
+use crate::{core::{game::state::GameState, game_id::GameId}, infrastructure::room::room_handler::RoomHandle};
 
 pub type SharedRoom    = Arc<Mutex<GameState>>;
-pub type RoomRegistry  = Arc<Mutex<HashMap<String, Arc<RoomHandle>>>>;
+pub type RoomRegistry  = Arc<Mutex<HashMap<GameId, Arc<RoomHandle>>>>;

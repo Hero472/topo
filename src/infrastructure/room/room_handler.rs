@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::error::SendError;
 use crate::core::game::state::Seconds;
+use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::{
@@ -18,15 +19,15 @@ pub struct RoomHandle {
 
 impl RoomHandle {
     pub fn new_arc(
-        room_id: String,
+        game_id: GameId,
         turn_seconds: Seconds,
-        shutdown_tx: mpsc::UnboundedSender<String>,
+        shutdown_tx: mpsc::UnboundedSender<GameId>,
     ) -> Arc<Self> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let actor_tx = cmd_tx.clone();
         let handle = Arc::new(Self { cmd_tx: cmd_tx.clone() });
 
-        tokio::spawn(room_actor(room_id, turn_seconds, cmd_rx, actor_tx, shutdown_tx));
+        tokio::spawn(room_actor(game_id, turn_seconds, cmd_rx, actor_tx, shutdown_tx));
         handle
     }
 

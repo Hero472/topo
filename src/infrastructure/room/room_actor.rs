@@ -3,22 +3,23 @@ use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
 
 use crate::core::game::state::{GameState, Seconds};
+use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
 use crate::infrastructure::room::player_info::PlayerInfo;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::infrastructure::room::room_phase::{LobbyPhase, RoomPhase};
 
 pub async fn room_actor(
-    room_id: String,
+    game_id: GameId,
     turn_seconds: Seconds,
     mut cmd_rx: mpsc::UnboundedReceiver<RoomCommand>,
     cmd_tx: mpsc::UnboundedSender<RoomCommand>,
-    shutdown_tx: mpsc::UnboundedSender<String>,
+    shutdown_tx: mpsc::UnboundedSender<GameId>,
 ) {
     let mut players: HashMap<PlayerId, PlayerInfo> = HashMap::new();
     let mut state: Option<GameState> = None;
     let mut timer: Option<CancellationToken> = None;
-    let mut phase: Box<dyn RoomPhase + Send> = Box::new(LobbyPhase::new(room_id.clone(), turn_seconds));
+    let mut phase: Box<dyn RoomPhase + Send> = Box::new(LobbyPhase::new(game_id.clone(), turn_seconds));
 
     while let Some(cmd) = cmd_rx.recv().await {
         if matches!(cmd, RoomCommand::Shutdown) {
@@ -32,7 +33,7 @@ pub async fn room_actor(
         }
     }
 
-    let _ = shutdown_tx.send(room_id);
+    let _ = shutdown_tx.send(game_id);
     log::info!("Room actor shut down");
 }
 
@@ -71,7 +72,7 @@ use crate::infrastructure::error::ErrorCode;
         let (shutdown_tx, _shutdown_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(room_actor(
-            room_id.to_string(),
+            GameId(room_id.to_string()),
             turn_seconds,
             cmd_rx,
             actor_tx,

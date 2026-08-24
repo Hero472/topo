@@ -1,10 +1,9 @@
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-use crate::infrastructure::room::room_handler::RoomHandle;
+use crate::core::game_id::GameId;
+use crate::infrastructure::room::room_registry::RoomRegistry;
 
 pub struct AppState {
-    pub rooms: Arc<Mutex<HashMap<String, Arc<RoomHandle>>>>,
-    pub room_shutdown_tx: mpsc::UnboundedSender<String>,
+    pub rooms: RoomRegistry,
+    pub room_shutdown_tx: mpsc::UnboundedSender<GameId>,
 }

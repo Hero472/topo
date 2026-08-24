@@ -2,9 +2,7 @@ use serde::Serialize;
 
 use crate::{
     core::{
-        game::{card::Card, deck::DeckColor, scale::Scale, state::Seconds},
-        game_index::{ScaleIdx, StackIdx},
-        player::{PlayerId, PlayerIdx}
+        game::{card::Card, deck::DeckColor, scale::Scale, state::Seconds}, game_id::GameId, game_index::{ScaleIdx, StackIdx}, player::{PlayerId, PlayerIdx}
     }, infrastructure::{
         error::{ErrorCode, ErrorDetails}, views::{PersonalPileView, PlayerBoardView}
     }
@@ -22,6 +20,10 @@ pub enum ServerEvent {
     PlayerLeft {
         player_id: PlayerId,
         player_idx: PlayerIdx 
+    },
+
+    WaitingForPlayer {
+        game_id: GameId,
     },
 
     // ── Game lifecycle ──
@@ -83,6 +85,8 @@ pub enum ServerEvent {
         turn_seconds_remaining: Seconds,
     },
 
+    OpponentLeft,
+
     // ── Turn ended ──
     TurnEnded {
         next_player_id: PlayerId,
@@ -101,6 +105,7 @@ pub enum ServerEvent {
 
     // ── Full state sync (join/reconnect) ──
     FullState {
+        player_id: PlayerId,
         your_board: PlayerBoardView,
         your_turn: bool,
         opponent: OpponentView,
@@ -119,6 +124,10 @@ pub enum ServerEvent {
         player_id: PlayerId,
         player_idx: PlayerIdx,
         turn_seconds_remaining: Seconds,
+    },
+
+    PlayAgain {
+        player_id: PlayerId,
     },
 
     Error {

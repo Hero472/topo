@@ -49,6 +49,10 @@ pub enum RoomCommand {
         player_id: PlayerId,
     },
 
+    PlayAgain {
+        player_id: PlayerId,
+    },
+
     Shutdown,
 
     SetSeed(Seed)

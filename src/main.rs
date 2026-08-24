@@ -5,7 +5,9 @@ use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use actix_cors::Cors;
 use tokio::sync::mpsc;
 use topo::app_state::AppState;
+use topo::core::game_id::GameId;
 use topo::core::game_index::HandIdx;
+use topo::infrastructure::game_handler::create_game;
 use topo::infrastructure::ws_handler::ws_handler;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -14,7 +16,7 @@ use std::collections::HashMap;
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
-    let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<String>();
+    let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<GameId>();
     let rooms_map = Arc::new(Mutex::new(HashMap::new()));
     let rooms_map_clone = Arc::clone(&rooms_map);
 
@@ -41,7 +43,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(app_state.clone())
             .app_data(PayloadConfig::new(4096))
-            .route("/ws/{room_id}", web::get().to(ws_handler))
+            .route("/api/games", web::post().to(create_game))
+            .route("/ws/{game_id}", web::get().to(ws_handler))
             .route("/health", web::get().to(|| async { "OK" }))
             .route("/{tail:.*}", web::get().to(|req: HttpRequest| async move {
                 println!("📥 Catch-all: {} {}", req.method(), req.uri());

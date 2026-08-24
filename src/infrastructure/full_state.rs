@@ -81,6 +81,7 @@ pub fn build_full_state(
         .collect();
 
     Some(ServerEvent::FullState {
+        player_id: your_board.player_id.expect("player id always expected for FullState"),
         your_board: your_board_view,
         your_turn: game_state
             .players

@@ -4,8 +4,7 @@ use async_trait::async_trait;
 use log::warn;
 use rand::RngExt;
 use crate::{
-    core::{game::state::{Seconds, state_types::Seed}, player::{PlayerId, PlayerIdx}},
-    infrastructure::{
+    core::{game::state::{Seconds, state_types::Seed}, game_id::GameId, player::{PlayerId, PlayerIdx}}, infrastructure::{
         room::utils::{broadcast, send_full_state, start_timer},
         server_event::ServerEvent
     }
@@ -14,16 +13,16 @@ use crate::{
 use super::*;
 
 pub struct LobbyPhase {
-    pub room_id: String,
+    pub game_id: GameId,
     pub turn_seconds: Seconds,
     next_player_idx: PlayerIdx,
     seed: Option<Seed>
 }
 
 impl LobbyPhase {
-    pub fn new(room_id: String, turn_seconds: Seconds) -> Self {
+    pub fn new(game_id: GameId, turn_seconds: Seconds) -> Self {
         Self {
-            room_id,
+            game_id,
             turn_seconds,
             next_player_idx: PlayerIdx(0),
             seed: None
@@ -33,7 +32,6 @@ impl LobbyPhase {
 
 #[async_trait]
 impl RoomPhase for LobbyPhase {
-
     async fn handle_command(
         &mut self,
         cmd: RoomCommand,
@@ -87,17 +85,26 @@ impl RoomPhase for LobbyPhase {
                     },
                 );
 
+                if self.next_player_idx == PlayerIdx(1) {
+                    broadcast(
+                        players,
+                        &ServerEvent::WaitingForPlayer {
+                            game_id: self.game_id.clone(),
+                        },
+                    );
+                }
+
                 if self.next_player_idx == PlayerIdx(2) {
                     let seed = self.seed.unwrap_or_else(|| Seed(rand::rng().random::<u64>()));
 
                     let mut new_state = GameState::new(
-                        self.room_id.clone(),
+                        self.game_id.clone(),
                         seed,
                         13,
                         5,
                         self.turn_seconds
                     );
-                    new_state.start_game(); // Player IDx starter can be either 0 or 1
+                    new_state.start_game(); // Player IDx starter can be either 1 or 2
 
                     for (&pid, pinfo) in players.iter() {
                         if let Some(board) = new_state
@@ -142,7 +149,7 @@ impl RoomPhase for LobbyPhase {
                         .collect();
 
                     return Some(Box::new(PlayingPhase {
-                        room_id: self.room_id.clone(),
+                        game_id: self.game_id.clone(),
                         turn_seconds: self.turn_seconds,
                         disconnect_token: None,
                         current_player: starter_idx,
@@ -165,9 +172,11 @@ impl RoomPhase for LobbyPhase {
                         },
                     );
                 }
+
                 if players.is_empty() {
-                    return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())));
+                    let _ = cmd_tx.send(RoomCommand::Shutdown);
                 }
+
                 None
             },
 
@@ -185,9 +194,17 @@ impl RoomPhase for LobbyPhase {
             },
 
             RoomCommand::UnsubscribePlayer { player_id } => {
-                players.remove(&player_id);
+                let removed = players.remove(&player_id);
+
+                if removed.is_some() {
+                    broadcast(
+                        players,
+                        &ServerEvent::OpponentLeft,
+                    );
+                }
+
                 None
-            },
+            }
 
             RoomCommand::SetSeed(s) => {
                 self.seed = Some(s);
@@ -199,7 +216,5 @@ impl RoomPhase for LobbyPhase {
                 None
             }
         }
-
     }
-
 }

@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::core::{
     game::{
         actions::{Action, MoveError, MoveSuccess, TurnPhase, move_result::MoveResult}, board::PlayerBoard, card::Card, dealer::CardDealer, scale::{Scale, ScaleManager}, state::{Seconds, state_types::Seed},
-    }, game_index::ScaleIdx, player::{PlayerId, PlayerIdx}
+    }, game_id::GameId, game_index::ScaleIdx, player::{PlayerId, PlayerIdx}
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -17,7 +17,7 @@ pub enum GamePhase {
 
 #[derive(Debug)]
 pub struct GameState {
-    pub room_id: String,
+    pub game_id: GameId,
     pub phase: GamePhase,
     pub players: Vec<PlayerBoard>,
     pub card_dealer: CardDealer,
@@ -32,7 +32,7 @@ pub struct GameState {
 
 impl GameState {
     pub fn new(
-        room_id: String,
+        game_id: GameId,
         seed: Seed,
         personal_count: usize,
         hand_count: usize,
@@ -61,7 +61,7 @@ impl GameState {
             .collect();
 
         Self {
-            room_id,
+            game_id,
             phase: GamePhase::Waiting,
             players,
             card_dealer: dealer,
@@ -82,7 +82,7 @@ impl GameState {
         turn_seconds: Seconds,
     ) -> Self {
         Self {
-            room_id: "test_room".to_string(),
+            game_id: GameId("test_room".to_string()),
             phase: GamePhase::Waiting,
             players,
             card_dealer,
@@ -490,7 +490,7 @@ mod tests {
 
     fn make_game() -> GameState {
         let mut gs = GameState::new(
-            "room".into(),
+            GameId("room".into()),
             Seed(0),
             13,
             5,
@@ -501,7 +501,7 @@ mod tests {
     }
 
     fn empty_game_for_lobby() -> GameState {
-        let mut gs = GameState::new("test".into(), Seed(0), 13, 5, Seconds(30));
+        let mut gs = GameState::new(GameId("test".into()), Seed(0), 13, 5, Seconds(30));
         gs.players.clear();
         gs.phase = GamePhase::Waiting;
         gs
@@ -526,7 +526,7 @@ mod tests {
     // ── Initialization & player management ───────────────────
     #[test]
     fn new_game_has_two_players_waiting() {
-        let gs = GameState::new("r".into(), Seed(0), 13, 5, Seconds(30));
+        let gs = GameState::new(GameId("r".into()), Seed(0), 13, 5, Seconds(30));
         assert_eq!(gs.players.len(), 2);
         assert_eq!(gs.phase, GamePhase::Waiting);
         assert_eq!(gs.players[0].player_idx, PlayerIdx(0));

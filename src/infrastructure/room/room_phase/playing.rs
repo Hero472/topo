@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::core::game::actions::move_result::MoveResult;
 use crate::core::game::actions::{MoveSuccess, MoveError};
 use crate::core::game::state::{GameState, Seconds};
+use crate::core::game_id::GameId;
 use crate::core::player::PlayerIdx;
 use crate::infrastructure::error::{ErrorCode, ErrorDetails};
 use crate::infrastructure::room::player_info::PlayerInfo;
@@ -18,7 +19,7 @@ use crate::infrastructure::full_state::build_full_state;
 use super::*; 
 
 pub struct PlayingPhase {
-    pub room_id: String,
+    pub game_id: GameId,
     pub turn_seconds: Seconds,
     pub turn_started_at: Instant,
     pub disconnect_token: Option<CancellationToken>,
@@ -131,14 +132,26 @@ impl RoomPhase for PlayingPhase {
                 process_action(players, game_state, &action, &success, player_id, self.turn_seconds_remaining());
 
                 if let MoveSuccess::GameWon { winner_idx } = success {
-                    let winner_external = self.idx_to_id[&winner_idx];
-                    info!("Game won by player {:?} ({:?}) in room {}", winner_external, winner_idx, self.room_id);
-                    broadcast(players, &ServerEvent::GameOver {
-                        winner_id: winner_external,
+                    let winner_id = self.idx_to_id[&winner_idx];
+
+                    info!(
+                        "Game won by player {:?} ({:?}) in room {}",
+                        winner_id,
                         winner_idx,
-                        reason: "All cards cleared".into(),
-                    });
-                    return Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())))
+                        self.game_id
+                    );
+
+                    let participants = self.id_to_idx.clone();
+
+                    return Some(Box::new(OverPhase::new(
+                        self.game_id.clone(),
+                        players,
+                        participants,
+                        self.turn_seconds,
+                        winner_id,
+                        winner_idx,
+                        "All cards cleared".into(),
+                    )));
                 }
 
                 if success.turn_ended() {
@@ -306,38 +319,45 @@ impl RoomPhase for PlayingPhase {
             },
 
             RoomCommand::DisconnectTimeout { player_id } => {
-                // println!("[ACTOR] Received command: {:?}", cmd);
                 let info = match players.get(&player_id) {
                     Some(info) => info,
                     None => return None,
                 };
 
                 if info.connected {
-                    // Reconnected before timeout fired – do nothing
                     return None;
                 }
 
-                // Clean up
                 if let Some(token) = self.disconnect_token.take() {
                     token.cancel();
                 }
 
-                let winner: Option<(PlayerId, PlayerIdx)> = self.id_to_idx
+                let winner = self
+                    .id_to_idx
                     .iter()
                     .find(|(pid, _)| **pid != player_id)
                     .map(|(&pid, &idx)| (pid, idx));
 
                 if let Some((winner_id, winner_idx)) = winner {
-                    broadcast(players, &ServerEvent::GameOver {
+                    // Keep both players as participants.
+                    let participants = self.id_to_idx.clone();
+
+                    // Remove the disconnected player from currently connected players.
+                    players.remove(&player_id);
+
+                    return Some(Box::new(OverPhase::new(
+                        self.game_id.clone(),
+                        players,
+                        participants,
+                        self.turn_seconds,
                         winner_id,
                         winner_idx,
-                        reason: "Opponent did not reconnect in time".into(),
-                    });
+                        "Opponent did not reconnect in time".into(),
+                    )));
                 }
 
-                players.remove(&player_id);
-                Some(Box::new(OverPhase::new(self.room_id.clone(), cmd_tx.clone())))
-            },
+                None
+            }
             
             RoomCommand::IsPlayerKnown { player_id, reply } => {
                 let known = players.contains_key(&player_id);

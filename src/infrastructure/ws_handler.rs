@@ -8,9 +8,8 @@ use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::core::game::actions::Action;
-use crate::core::game::state::Seconds;
+use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
-use crate::infrastructure::room::room_handler::RoomHandle;
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -25,28 +24,27 @@ pub async fn ws_handler(
     path: web::Path<String>,
     query: web::Query<WsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let room_id = path.into_inner();
+    let game_id = GameId(path.into_inner());
 
     let player_uuid = Uuid::parse_str(&query.player_id)
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("Invalid player_id UUID: {}", e)))?;
     let player_id = PlayerId(player_uuid);
     let username = query.username.as_deref().unwrap_or("Anonymous").to_string();
 
-    log::info!("ws_handler room={}, player={:?}, username={}", room_id, player_id, username);
+    log::info!("ws_handler room={}, player={:?}, username={}", game_id, player_id, username);
 
     // ── Get or create the room ──
     let room = {
-        let mut rooms = state.rooms.lock().unwrap();
-        rooms
-            .entry(room_id.clone())
-            .or_insert_with(|| {
-                RoomHandle::new_arc(
-                    room_id.clone(),
-                    Seconds(180), // here for changing the timer time in seconds, in the future it will be the front who puts the timer
-                    state.room_shutdown_tx.clone(),
-                )
-            })
-            .clone()
+        let rooms = state.rooms.lock().unwrap();
+
+        match rooms.get(&game_id) {
+            Some(room) => room.clone(),
+            None => {
+                return Err(actix_web::error::ErrorNotFound(
+                    "Game not found",
+                ));
+            }
+        }
     };
 
     let is_reconnect = room.is_player_known(player_id).await;
