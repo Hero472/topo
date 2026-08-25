@@ -17,14 +17,12 @@ pub enum RoomCommand {
         username: String
     },
 
-    /// A player disconnected or left voluntarily.
-    PlayerLeft {
-        player_id: PlayerId,
-    },
+    PlayerReady { player_id: PlayerId },
 
-    TurnTimeout {
-        player_id: PlayerId,
-    },
+    /// A player disconnected or left voluntarily.
+    PlayerLeft { player_id: PlayerId },
+
+    TurnTimeout { player_id: PlayerId },
 
     /// A player submitted a game action (draw, play card, etc.).
     PlayerAction {
@@ -32,26 +30,16 @@ pub enum RoomCommand {
         action: Action,
     },
 
-    PlayerReconnected {
-        player_id: PlayerId
-    },
+    PlayerReconnected { player_id: PlayerId },
 
     IsPlayerKnown {
         player_id: PlayerId,
         reply: oneshot::Sender<bool>,
     },
 
-    UnsubscribePlayer {
-        player_id: PlayerId,
-    },
-
-    DisconnectTimeout {
-        player_id: PlayerId,
-    },
-
-    PlayAgain {
-        player_id: PlayerId,
-    },
+    UnsubscribePlayer { player_id: PlayerId },
+    DisconnectTimeout { player_id: PlayerId,},
+    PlayAgain { player_id: PlayerId },
 
     Shutdown,
 

@@ -22,6 +22,8 @@ pub enum ServerEvent {
         player_idx: PlayerIdx 
     },
 
+    PlayerReady { player_id: PlayerId },
+
     WaitingForPlayer {
         game_id: GameId,
     },
@@ -118,6 +120,7 @@ pub enum ServerEvent {
     PlayerDisconnected {
         player_id: PlayerId,
         player_idx: PlayerIdx,
+        grace_period_seconds: u64
     },
 
     PlayerReconnected {
@@ -126,9 +129,9 @@ pub enum ServerEvent {
         turn_seconds_remaining: Seconds,
     },
 
-    PlayAgain {
-        player_id: PlayerId,
-    },
+    PlayAgain { player_id: PlayerId },
+
+    PlayAgainRequested { player_id: PlayerId },
 
     Error {
         code: ErrorCode,
