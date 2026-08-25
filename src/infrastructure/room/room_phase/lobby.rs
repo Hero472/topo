@@ -14,6 +14,7 @@ use super::*;
 
 const BOARD_SIZE: usize = 13;
 const HAND_SIZE: usize = 5;
+const START_COUNTDOWN_SECONDS: u64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LobbyState {
@@ -151,7 +152,7 @@ impl RoomPhase for LobbyPhase {
     ) -> Option<Box<dyn RoomPhase + Send>> {
         debug!("HANDLE_LOBBY_CMD: {:?}", cmd);
 
-        if self.state == LobbyState::Starting {
+        if self.state == LobbyState::Starting && !matches!(cmd, RoomCommand::StartGame){
             return None;
         }
 
@@ -222,16 +223,64 @@ impl RoomPhase for LobbyPhase {
                     warn!("PlayerReady for unknown player {:?}", player_id);
                     return None;
                 }
- 
+
                 if self.ready.insert(player_id) {
-                    broadcast(players, &ServerEvent::PlayerReady { player_id });
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerReady { player_id },
+                    );
                 }
- 
+
                 if self.all_players_ready(players) {
                     self.state = LobbyState::Starting;
-                    return Some(self.start_game(players, state, timer, cmd_tx));
+
+                    let tx = cmd_tx.clone();
+
+                    tokio::spawn(async move {
+                        for seconds in (1..=3).rev() {
+                            // Tell the clients how long remains.
+                            let _ = tx.send(RoomCommand::GameStartingTick {
+                                seconds_remaining: seconds,
+                            });
+
+                            tokio::time::sleep(
+                                std::time::Duration::from_secs(1)
+                            ).await;
+                        }
+
+                        let _ = tx.send(RoomCommand::StartGame);
+                    });
                 }
- 
+
+                None
+            }
+
+            RoomCommand::StartGame => {
+                if self.state != LobbyState::Starting {
+                    return None;
+                }
+
+                if !self.all_players_ready(players) {
+                    // Something changed during the countdown.
+                    self.state = LobbyState::Waiting;
+                    return None;
+                }
+
+                Some(self.start_game(players, state, timer, cmd_tx))
+            }
+
+            RoomCommand::GameStartingTick { seconds_remaining } => {
+                if self.state != LobbyState::Starting {
+                    return None;
+                }
+
+                broadcast(
+                    players,
+                    &ServerEvent::GameStarting {
+                        seconds_remaining,
+                    },
+                );
+
                 None
             }
 

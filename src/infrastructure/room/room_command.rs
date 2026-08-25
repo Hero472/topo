@@ -19,6 +19,12 @@ pub enum RoomCommand {
 
     PlayerReady { player_id: PlayerId },
 
+    StartGame,
+
+    GameStartingTick {
+        seconds_remaining: u8,
+    },
+
     /// A player disconnected or left voluntarily.
     PlayerLeft { player_id: PlayerId },
 

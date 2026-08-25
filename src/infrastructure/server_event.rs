@@ -76,6 +76,10 @@ pub enum ServerEvent {
         by_player_idx: PlayerIdx,
     },
 
+    GameStarting {
+        seconds_remaining: u8,
+    },
+
     // ── Private: opponent’s visible state changed ──
     OpponentUpdate {
         player_id: PlayerId,
