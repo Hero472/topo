@@ -1,7 +1,16 @@
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::{core::{game::{actions::Action, state::state_types::Seed}, player::PlayerId}, infrastructure::message::GameMessage};
 use tokio::sync::oneshot;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LobbyAction {
+    PlayerReady,
+    PlayAgain,
+}
+
 
 #[derive(Debug)]
 pub enum RoomCommand {
@@ -18,6 +27,7 @@ pub enum RoomCommand {
     },
 
     PlayerReady { player_id: PlayerId },
+    PlayAgain { player_id: PlayerId },
 
     StartGame,
 
@@ -44,8 +54,7 @@ pub enum RoomCommand {
     },
 
     UnsubscribePlayer { player_id: PlayerId },
-    DisconnectTimeout { player_id: PlayerId,},
-    PlayAgain { player_id: PlayerId },
+    DisconnectTimeout { player_id: PlayerId },
 
     Shutdown,
 

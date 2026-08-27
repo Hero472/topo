@@ -4,7 +4,7 @@ use tokio::sync::mpsc::error::SendError;
 use crate::core::game::state::Seconds;
 use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
-use crate::infrastructure::room::room_command::RoomCommand;
+use crate::infrastructure::room::room_command::{LobbyAction, RoomCommand};
 use crate::{
     core::game::actions::Action,
     infrastructure::{
@@ -65,6 +65,18 @@ impl RoomHandle {
 
     pub fn remove_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerLeft { player_id })
+    }
+
+    pub fn apply_lobby_action(
+        &self,
+        player_id: PlayerId,
+        action: LobbyAction,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<RoomCommand>> {
+        let cmd = match action {
+            LobbyAction::PlayerReady => RoomCommand::PlayerReady { player_id },
+            LobbyAction::PlayAgain => RoomCommand::PlayAgain { player_id },
+        };
+        self.cmd_tx.send(cmd)
     }
 
     pub fn apply_action(

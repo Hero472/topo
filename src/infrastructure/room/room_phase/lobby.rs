@@ -5,8 +5,7 @@ use log::{debug, warn};
 use rand::RngExt;
 use crate::{
     core::{game::state::{Seconds, state_types::Seed}, game_id::GameId, player::{PlayerId, PlayerIdx}}, infrastructure::{
-        room::utils::{broadcast, send_full_state, start_timer},
-        server_event::ServerEvent
+        message::GameMessage, room::utils::{broadcast, send_full_state, start_timer}, server_event::ServerEvent
     }
 };
 
@@ -172,14 +171,14 @@ impl RoomPhase for LobbyPhase {
             
             RoomCommand::PlayerJoined { player_id, username } => {
                 let joined_before = Self::joined_count(players);
- 
+
                 if joined_before >= 2 {
                     warn!("PlayerJoined for {:?} but lobby is already full - ignored", player_id);
                     return None;
                 }
- 
+
                 let idx = Self::next_available_idx(players);
- 
+
                 let info = match players.get_mut(&player_id) {
                     Some(info) => info,
                     None => {
@@ -187,16 +186,31 @@ impl RoomPhase for LobbyPhase {
                         return None;
                     }
                 };
- 
+
                 if info.player_idx != PlayerIdx(usize::MAX) {
                     warn!("Duplicate PlayerJoined for {:?} - ignored", player_id);
                     return None;
                 }
- 
+
                 info.player_idx = idx;
                 info.connected = true;
                 info.username = username.clone();
- 
+
+                let new_player_tx = info.tx.clone(); 
+                for (existing_id, existing_info) in players.iter() {
+                    if *existing_id != player_id && existing_info.player_idx != PlayerIdx(usize::MAX) {
+                        let _ = new_player_tx.send(GameMessage {
+                            to: None,
+                            event: ServerEvent::PlayerJoined {
+                                player_id: *existing_id,
+                                player_idx: existing_info.player_idx,
+                                username: existing_info.username.clone(),
+                            },
+                        });
+                    }
+                }
+
+                // Then broadcast the NEW player's arrival to EVERYONE (including the new player)
                 broadcast(
                     players,
                     &ServerEvent::PlayerJoined {
@@ -205,7 +219,7 @@ impl RoomPhase for LobbyPhase {
                         username: username.clone(),
                     },
                 );
- 
+
                 if joined_before == 0 {
                     broadcast(
                         players,
@@ -214,7 +228,7 @@ impl RoomPhase for LobbyPhase {
                         },
                     );
                 }
- 
+
                 None
             }
 

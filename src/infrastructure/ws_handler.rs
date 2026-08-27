@@ -3,13 +3,22 @@ use std::time::Duration;
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_ws::Message;
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::core::game::actions::Action;
 use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
+use crate::infrastructure::room::room_command::LobbyAction;
+
+// ── Router enum for incoming WebSocket messages ──
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClientMessage {
+    Lobby(LobbyAction),
+    Game(Action),
+}
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -118,34 +127,50 @@ pub async fn ws_handler(
                     match maybe_msg {
                         Some(Ok(msg)) => match msg {
                             Message::Text(text) => {
-                                match serde_json::from_str::<Action>(&text) {
-                                    Ok(action) => {
-                                        if let Err(e) = room_clone.apply_action(player_id, action) {
-                                            log::warn!("Failed to apply action: {:?}", e);
+                                // ✅ NEW: Parse using the ClientMessage wrapper
+                                match serde_json::from_str::<ClientMessage>(&text) {
+                                    
+                                    // Route to Lobby handler
+                                    Ok(ClientMessage::Lobby(lobby_action)) => {
+                                        if let Err(e) = room_clone.apply_lobby_action(player_id, lobby_action) {
+                                            log::warn!("Failed to apply lobby action: {:?}", e);
                                             let err = serde_json::json!({
-                                                "error": "invalid_move",
-                                                "details": format!("{:?}", e)
+                                                "type": "error",
+                                                "code": "invalid_lobby_action",
+                                                "message": format!("{:?}", e)
                                             });
                                             let _ = session.text(err.to_string()).await;
                                         }
                                     }
+
+                                    // Route to Game handler
+                                    Ok(ClientMessage::Game(game_action)) => {
+                                        if let Err(e) = room_clone.apply_action(player_id, game_action) {
+                                            log::warn!("Failed to apply game action: {:?}", e);
+                                            let err = serde_json::json!({
+                                                "type": "error",
+                                                "code": "invalid_move",
+                                                "message": format!("{:?}", e)
+                                            });
+                                            let _ = session.text(err.to_string()).await;
+                                        }
+                                    }
+
+                                    // Parsing failed
                                     Err(e) => {
                                         let err = serde_json::json!({
-                                            "error": "invalid_action",
-                                            "details": e.to_string()
+                                            "type": "error",
+                                            "code": "invalid_action",
+                                            "message": e.to_string()
                                         });
                                         let _ = session.text(err.to_string()).await;
                                     }
                                 }
                             }
                             Message::Ping(bytes) => {
-                                if session.pong(&bytes).await.is_err() {
-                                    break;
-                                }
+                                if session.pong(&bytes).await.is_err() { break; }
                             }
-                            Message::Pong(_) => {
-                                // nothing needed, but keeps connection alive
-                            }
+                            Message::Pong(_) => {}
                             Message::Close(_) => break,
                             _ => {}
                         },
