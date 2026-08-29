@@ -1,20 +1,20 @@
 use async_trait::async_trait;
-use log::{debug, info, trace, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use tokio::task::JoinHandle;
 
 use crate::core::game::actions::move_result::MoveResult;
 use crate::core::game::actions::{MoveSuccess, MoveError};
 use crate::core::game::state::{GameState, Seconds};
 use crate::core::game_id::GameId;
-use crate::core::player::PlayerIdx;
+use crate::core::player::{PlayerId, PlayerIdx};
 use crate::infrastructure::error::{ErrorCode, ErrorDetails};
 use crate::infrastructure::room::player_info::PlayerInfo;
 use crate::infrastructure::room::room_command::RoomCommand;
 use crate::infrastructure::server_event::ServerEvent;
 use crate::infrastructure::room::utils::*;
 use crate::infrastructure::full_state::build_full_state;
-
 
 use super::*;
 
@@ -25,7 +25,7 @@ pub struct PlayingPhase {
     pub game_id: GameId,
     pub turn_seconds: Seconds,
     pub turn_started_at: Instant,
-    pub disconnect_tokens: HashMap<PlayerId, CancellationToken>,
+    pub pending_disconnects: HashMap<PlayerId, JoinHandle<()>>, // ✅ Updated to match LobbyPhase
     pub current_player: PlayerIdx,
     pub id_to_idx: HashMap<PlayerId, PlayerIdx>,
     pub idx_to_id: HashMap<PlayerIdx, PlayerId>,
@@ -33,33 +33,8 @@ pub struct PlayingPhase {
 
 impl PlayingPhase {
     pub fn turn_seconds_remaining(&self) -> Seconds {
-        let elapsed = Seconds::from(
-            self.turn_started_at.elapsed().as_secs()
-        );
- 
+        let elapsed = Seconds::from(self.turn_started_at.elapsed().as_secs());
         self.turn_seconds.saturating_sub(elapsed)
-    }
- 
-    /// Spawns the grace-period watchdog for a disconnected player. If it isn't
-    /// cancelled (via reconnect) before it elapses, sends DisconnectTimeout.
-    fn spawn_disconnect_grace_timer(
-        player_id: PlayerId,
-        cmd_tx: &mpsc::UnboundedSender<RoomCommand>,
-    ) -> CancellationToken {
-        let token = CancellationToken::new();
-        let cancel_clone = token.clone();
-        let tx = cmd_tx.clone();
- 
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel_clone.cancelled() => {},
-                _ = tokio::time::sleep(Duration::from_secs(DISCONNECT_GRACE_SECONDS)) => {
-                    let _ = tx.send(RoomCommand::DisconnectTimeout { player_id });
-                }
-            }
-        });
- 
-        token
     }
 }
 
@@ -73,20 +48,28 @@ impl RoomPhase for PlayingPhase {
         timer: &mut Option<CancellationToken>,
         cmd_tx: &mpsc::UnboundedSender<RoomCommand>,
     ) -> Option<Box<dyn RoomPhase + Send>> {
-
         let game_state = state.as_mut().expect("PlayingPhase requires a game state");
 
-        println!("HANDLE_PLAYING_CMD: {:?}", cmd);
+        debug!("HANDLE_PLAYING_CMD: {:?}", cmd);
 
         match cmd {
-
             RoomCommand::SubscribePlayer { player_id, sender } => {
                 if let Some(info) = players.get_mut(&player_id) {
                     info.tx = sender;
                 } else {
                     warn!("SubscribePlayer for unknown player {:?}", player_id);
                 }
- 
+                None
+            }
+
+            RoomCommand::UnsubscribePlayer { player_id } => {
+                // Only remove if they never successfully joined (player_idx is still MAX)
+                // If they did join, we rely on NetworkDisconnect or PlayerLeft.
+                if let Some(info) = players.get(&player_id) {
+                    if info.player_idx == PlayerIdx(usize::MAX) {
+                        players.remove(&player_id);
+                    }
+                }
                 None
             }
 
@@ -98,76 +81,92 @@ impl RoomPhase for PlayingPhase {
                         return None;
                     }
                 };
- 
-                debug!("Received action from player {:?} ({:?}): {:?}", player_id, player_idx, action);
- 
+
                 if player_idx != self.current_player {
-                    send_to(players, player_id, ServerEvent::Error {
-                        code: ErrorCode::NotYourTurn,
-                        message: Some("It's not your turn".into()),
-                        details: Some(ErrorDetails {
-                            player_id: Some(player_id),
-                            action: Some(format!("{:?}", action)),
-                            card_id: None,
-                        }),
-                    });
-                    return None;
-                }
- 
-                let MoveResult {
-                    success,
-                    drawn_cards,
-                    discarded_cards
-                } = match game_state.apply_move(player_idx, action.clone()) {
-                    Ok(success) => success,
-                    Err(move_err) => {
-                        let code = match move_err {
-                            MoveError::DoesNotFit => ErrorCode::InvalidMove,
-                            MoveError::NotAllowed => ErrorCode::InvalidMove,
-                            MoveError::InvalidIndex{..} => ErrorCode::CardNotFound,
-                            MoveError::NotYourTurn => ErrorCode::NotYourTurn,
-                        };
-                        warn!("Invalid move by player {:?} ({:?}): {:?} -> {:?}", player_id, player_idx, action, move_err);
-                        send_to(players, player_id, ServerEvent::Error {
-                            code,
-                            message: None,
+                    send_to(
+                        players,
+                        player_id,
+                        ServerEvent::Error {
+                            code: ErrorCode::NotYourTurn,
+                            message: Some("It's not your turn".into()),
                             details: Some(ErrorDetails {
                                 player_id: Some(player_id),
                                 action: Some(format!("{:?}", action)),
                                 card_id: None,
                             }),
-                        });
+                        },
+                    );
+                    return None;
+                }
+
+                let MoveResult {
+                    success,
+                    drawn_cards,
+                    discarded_cards: _,
+                } = match game_state.apply_move(player_idx, action.clone()) {
+                    Ok(result) => result,
+                    Err(move_err) => {
+                        let code = match move_err {
+                            MoveError::DoesNotFit => ErrorCode::InvalidMove,
+                            MoveError::NotAllowed => ErrorCode::InvalidMove,
+                            MoveError::InvalidIndex { .. } => ErrorCode::CardNotFound,
+                            MoveError::NotYourTurn => ErrorCode::NotYourTurn,
+                        };
+                        warn!(
+                            "Invalid move by player {:?} ({:?}): {:?} -> {:?}",
+                            player_id, player_idx, action, move_err
+                        );
+                        send_to(
+                            players,
+                            player_id,
+                            ServerEvent::Error {
+                                code,
+                                message: None,
+                                details: Some(ErrorDetails {
+                                    player_id: Some(player_id),
+                                    action: Some(format!("{:?}", action)),
+                                    card_id: None,
+                                }),
+                            },
+                        );
                         return None;
                     }
                 };
- 
+
                 if let Some(token) = timer.take() {
                     token.cancel();
                 }
- 
-                if let Some(drawn_cards) = drawn_cards {
-                    send_to(players, player_id, ServerEvent::HandRefill {
+
+                if let Some(drawn) = drawn_cards {
+                    send_to(
+                        players,
                         player_id,
-                        player_idx,
-                        cards: drawn_cards,
-                        turn_seconds_remaining: self.turn_seconds_remaining()
-                    });
+                        ServerEvent::HandRefill {
+                            player_id,
+                            player_idx,
+                            cards: drawn,
+                            turn_seconds_remaining: self.turn_seconds_remaining(),
+                        },
+                    );
                 }
- 
-                process_action(players, game_state, &action, &success, player_id, self.turn_seconds_remaining());
- 
+
+                process_action(
+                    players,
+                    game_state,
+                    &action,
+                    &success,
+                    player_id,
+                    self.turn_seconds_remaining(),
+                );
+
                 if let MoveSuccess::GameWon { winner_idx } = success {
                     let winner_id = self.idx_to_id[&winner_idx];
- 
                     info!(
                         "Game won by player {:?} ({:?}) in room {}",
-                        winner_id,
-                        winner_idx,
-                        self.game_id
+                        winner_id, winner_idx, self.game_id
                     );
- 
+
                     let participants = self.id_to_idx.clone();
- 
                     return Some(Box::new(OverPhase::new(
                         self.game_id.clone(),
                         players,
@@ -178,33 +177,35 @@ impl RoomPhase for PlayingPhase {
                         "All cards cleared".into(),
                     )));
                 }
- 
+
                 if success.turn_ended() {
                     let next_idx = game_state.current_turn;
                     let next_id = self.idx_to_id[&next_idx];
- 
+
                     info!("Turn ended. Next player: {:?} ({:?})", next_id, next_idx);
- 
+
                     self.current_player = next_idx;
                     self.turn_started_at = Instant::now();
- 
-                    broadcast(players, &ServerEvent::TurnEnded {
-                        next_player_id: next_id,
-                        next_player_idx: next_idx,
-                        turn_seconds: self.turn_seconds,
-                        timed_out_player_id: None,
-                        timed_out_player_idx: None,
-                    });
+
+                    broadcast(
+                        players,
+                        &ServerEvent::TurnEnded {
+                            next_player_id: next_id,
+                            next_player_idx: next_idx,
+                            turn_seconds: self.turn_seconds,
+                            timed_out_player_id: None,
+                            timed_out_player_idx: None,
+                        },
+                    );
                     send_full_state(players, game_state);
- 
+
                     start_timer(next_id, self.turn_seconds, timer, cmd_tx);
                 }
- 
+
                 None
-            },
+            }
 
             RoomCommand::TurnTimeout { player_id } => {
-                // Sanity check: timeout should only happen for the current player
                 if Some(player_id) != self.idx_to_id.get(&self.current_player).copied() {
                     warn!(
                         "TurnTimeout for {:?}, but current player is {:?}",
@@ -212,20 +213,17 @@ impl RoomPhase for PlayingPhase {
                     );
                     return None;
                 }
- 
+
                 let timed_out_idx = self.current_player;
- 
-                // Cancel any existing timer (it already fired, but this keeps the state clean)
+
                 if let Some(token) = timer.take() {
                     token.cancel();
                 }
- 
-                // Advance the game's turn
+
                 let next_idx = game_state.advance_turn();
                 let next_id = self.idx_to_id[&next_idx];
                 self.current_player = next_idx;
- 
-                // Notify all players that the turn ended due to timeout
+
                 broadcast(
                     players,
                     &ServerEvent::TurnEnded {
@@ -236,18 +234,88 @@ impl RoomPhase for PlayingPhase {
                         timed_out_player_idx: Some(timed_out_idx),
                     },
                 );
- 
-                // Send updated game state to everyone
-                send_full_state(players, game_state);
- 
-                // Start the timer for the new current player
-                start_timer(next_id, self.turn_seconds, timer, cmd_tx);
- 
-                None
-            },
 
+                send_full_state(players, game_state);
+                start_timer(next_id, self.turn_seconds, timer, cmd_tx);
+
+                None
+            }
+
+            // Network drop (starts grace period, pauses turn if needed)
+            RoomCommand::NetworkDisconnect { player_id } => {
+                let player_idx = if let Some(info) = players.get_mut(&player_id) {
+                    info.connected = false;
+                    Some(info.player_idx)
+                } else {
+                    None
+                };
+
+                if let Some(idx) = player_idx {
+                    if idx == self.current_player {
+                        if let Some(token) = timer.take() {
+                            token.cancel();
+                        }
+                    }
+
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerDisconnected {
+                            player_id,
+                            player_idx: idx,
+                            grace_period_seconds: DISCONNECT_GRACE_SECONDS,
+                        },
+                    );
+
+                    let tx = cmd_tx.clone();
+                    let handle = tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(DISCONNECT_GRACE_SECONDS)).await;
+                        let _ = tx.send(RoomCommand::DisconnectTimeout { player_id });
+                    });
+
+                    self.pending_disconnects.insert(player_id, handle);
+                }
+                None
+            }
+
+            // Reconnect cancels grace period and restores state
+            RoomCommand::PlayerReconnected { player_id } => {
+                if let Some(handle) = self.pending_disconnects.remove(&player_id) {
+                    handle.abort();
+                }
+
+                let player_idx = if let Some(info) = players.get_mut(&player_id) {
+                    info.connected = true;
+                    Some(info.player_idx)
+                } else {
+                    None
+                };
+
+                if let Some(idx) = player_idx {
+                    if let Some(event) = build_full_state(game_state, idx, String::from("Opponent")) {
+                        send_to(players, player_id, event);
+                    }
+
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerReconnected {
+                            player_id,
+                            player_idx: idx,
+                            turn_seconds_remaining: self.turn_seconds_remaining(),
+                        },
+                    );
+
+                    if idx == self.current_player {
+                        start_timer(player_id, self.turn_seconds, timer, cmd_tx);
+                    }
+                }
+                None
+            }
+
+            // Intentional leave (bypasses grace period, ends game immediately)
             RoomCommand::PlayerLeft { player_id } => {
-                trace!("PlayerLeft for {:?}", player_id);
+                if let Some(handle) = self.pending_disconnects.remove(&player_id) {
+                    handle.abort();
+                }
 
                 let info = match players.get(&player_id) {
                     Some(info) => info,
@@ -259,12 +327,6 @@ impl RoomPhase for PlayingPhase {
 
                 let leaving_idx = info.player_idx;
 
-                // Cancel this player's pending disconnect grace timer, if any.
-                if let Some(token) = self.disconnect_tokens.remove(&player_id) {
-                    token.cancel();
-                }
-
-                // Cancel the normal turn timer.
                 if let Some(token) = timer.take() {
                     token.cancel();
                 }
@@ -282,8 +344,6 @@ impl RoomPhase for PlayingPhase {
                 };
 
                 let participants = self.id_to_idx.clone();
-
-                // Explicit leave is permanent.
                 players.remove(&player_id);
 
                 broadcast(
@@ -305,127 +365,33 @@ impl RoomPhase for PlayingPhase {
                 )))
             }
 
-            RoomCommand::UnsubscribePlayer { player_id } => {
-                trace!("UnsubscribePlayer for {:?}", player_id);
-
-                let info = match players.get_mut(&player_id) {
-                    Some(info) => info,
-                    None => {
-                        warn!("UnsubscribePlayer for unknown player {:?}", player_id);
-                        return None;
-                    }
-                };
-
-                // Already disconnected; don't create another grace timer.
-                if !info.connected {
-                    return None;
-                }
-
-                info.connected = false;
-                let idx = info.player_idx;
-
-                // If this player is currently taking their turn, pause their
-                // turn timer. It will be restarted if they reconnect.
-                if idx == self.current_player {
-                    if let Some(token) = timer.take() {
-                        token.cancel();
-                    }
-                }
-
-                broadcast(
-                    players,
-                    &ServerEvent::PlayerDisconnected {
-                        player_id,
-                        player_idx: idx,
-                        grace_period_seconds: DISCONNECT_GRACE_SECONDS,
-                    },
-                );
-
-                let disconnect_token =
-                    Self::spawn_disconnect_grace_timer(player_id, cmd_tx);
-
-                self.disconnect_tokens
-                    .insert(player_id, disconnect_token);
-
-                // IMPORTANT:
-                // Do not remove the player and do not leave PlayingPhase.
-                None
-            }
-
-            RoomCommand::PlayerReconnected { player_id } => {
-                let info = match players.get_mut(&player_id) {
-                    Some(info) => info,
-                    None => {
-                        warn!("Reconnect from unknown player {:?}", player_id);
-                        return None;
-                    }
-                };
- 
-                if info.connected {
-                    warn!("Player {:?} is already connected", player_id);
-                    return None;
-                }
- 
-                // Restore connection
-                info.connected = true;
- 
-                // Cancel *this player's* disconnect grace timer specifically -
-                // never touch another player's entry.
-                if let Some(token) = self.disconnect_tokens.remove(&player_id) {
-                    token.cancel();
-                }
- 
-                let idx = info.player_idx;
- 
-                // for now just opponent name
-                if let Some(event) = build_full_state(game_state, info.player_idx, String::from("Opponent name")) {
-                    send_to(players, player_id, event);
-                }
- 
-                // Notify opponent
-                broadcast(players, &ServerEvent::PlayerReconnected {
-                    player_id,
-                    player_idx: idx,
-                    turn_seconds_remaining: self.turn_seconds_remaining()
-                });
- 
-                // If it's currently this player's turn, restart the turn timer -
-                // it was paused specifically because they were the current player.
-                if idx == self.current_player {
-                    start_timer(player_id, self.turn_seconds, timer, cmd_tx);
-                }
- 
-                None
-            },
-
+            // ✅ NEW: Grace period expired, actually remove the player and end game
             RoomCommand::DisconnectTimeout { player_id } => {
+                self.pending_disconnects.remove(&player_id);
+
                 let info = match players.get(&player_id) {
                     Some(info) => info,
                     None => return None,
                 };
- 
+
                 if info.connected {
-                    return None;
+                    return None; // Reconnected just in time
                 }
- 
-                // Clean up this player's own grace-timer entry only.
-                if let Some(token) = self.disconnect_tokens.remove(&player_id) {
+
+                if let Some(token) = timer.take() {
                     token.cancel();
                 }
- 
+
                 let winner = self
                     .id_to_idx
                     .iter()
                     .find(|(pid, _)| **pid != player_id)
                     .map(|(&pid, &idx)| (pid, idx));
- 
+
                 if let Some((winner_id, winner_idx)) = winner {
-                    // Keep both players as participants.
                     let participants = self.id_to_idx.clone();
- 
-                    // Remove the disconnected player from currently connected players.
                     players.remove(&player_id);
- 
+
                     return Some(Box::new(OverPhase::new(
                         self.game_id.clone(),
                         players,
@@ -436,10 +402,10 @@ impl RoomPhase for PlayingPhase {
                         "Opponent did not reconnect in time".into(),
                     )));
                 }
- 
+
                 None
             }
-            
+
             RoomCommand::IsPlayerKnown { player_id, reply } => {
                 let known = players.contains_key(&player_id);
                 let _ = reply.send(known);
@@ -448,6 +414,5 @@ impl RoomPhase for PlayingPhase {
 
             _ => None,
         }
-
     }
 }

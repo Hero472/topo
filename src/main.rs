@@ -6,7 +6,6 @@ use actix_cors::Cors;
 use tokio::sync::mpsc;
 use topo::app_state::AppState;
 use topo::core::game_id::GameId;
-use topo::core::game_index::HandIdx;
 use topo::infrastructure::game_handler::create_game;
 use topo::infrastructure::ws_handler::ws_handler;
 use std::sync::{Arc, Mutex};

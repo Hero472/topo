@@ -9,54 +9,72 @@ use tokio::sync::oneshot;
 pub enum LobbyAction {
     PlayerReady,
     PlayAgain,
+    Leave
 }
 
 
 #[derive(Debug)]
 pub enum RoomCommand {
-    /// Register a new message sender for a player and return the receiver to the caller.
+    // ── Connection Lifecycle ──
+    
+    /// WebSocket opened. Register the sender so the actor can push events to this player.
     SubscribePlayer {
         player_id: PlayerId,
         sender: mpsc::UnboundedSender<GameMessage>,
     },
 
-    /// A player joined the room (or entered the match lobby).
+    /// Pure cleanup: removes the subscription placeholder if a join fails.
+    /// Does NOT trigger grace periods or game logic.
+    UnsubscribePlayer { player_id: PlayerId },
+
+    /// Player entered the room/lobby.
     PlayerJoined {
         player_id: PlayerId,
-        username: String
+        username: String,
     },
 
+    /// Player's WebSocket dropped unexpectedly (network loss, browser crash, etc.).
+    /// Starts a grace period timer. Does NOT remove the player yet.
+    NetworkDisconnect { player_id: PlayerId },
+
+    /// Player's WebSocket reconnected before the grace period expired.
+    /// Cancels the timer and marks them as connected.
+    PlayerReconnected { player_id: PlayerId },
+
+    /// Internal: The grace period timer expired. 
+    /// Now the player is officially removed from the room.
+    DisconnectTimeout { player_id: PlayerId },
+
+    // ── Intentional Player Actions ──
+
+    /// Player intentionally clicked "Ready" in the lobby.
     PlayerReady { player_id: PlayerId },
+
+    /// Player intentionally clicked "Play Again" after game over.
     PlayAgain { player_id: PlayerId },
 
-    StartGame,
-
-    GameStartingTick {
-        seconds_remaining: u8,
-    },
-
-    /// A player disconnected or left voluntarily.
+    /// Player intentionally clicked "Leave Game". 
+    /// Bypasses the grace period and removes them immediately.
     PlayerLeft { player_id: PlayerId },
 
-    TurnTimeout { player_id: PlayerId },
+    // ── Gameplay & State ──
 
-    /// A player submitted a game action (draw, play card, etc.).
+    /// Player submitted a game action (draw, play card, etc.).
     PlayerAction {
         player_id: PlayerId,
         action: Action,
     },
 
-    PlayerReconnected { player_id: PlayerId },
-
+    /// Check if a player is known to this room (used during reconnect).
     IsPlayerKnown {
         player_id: PlayerId,
         reply: oneshot::Sender<bool>,
     },
 
-    UnsubscribePlayer { player_id: PlayerId },
-    DisconnectTimeout { player_id: PlayerId },
-
+    // ── Game Lifecycle ──
+    StartGame,
+    GameStartingTick { seconds_remaining: u8 },
+    TurnTimeout { player_id: PlayerId },
+    SetSeed(Seed),
     Shutdown,
-
-    SetSeed(Seed)
 }

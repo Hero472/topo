@@ -42,16 +42,17 @@ impl RoomHandle {
         rx
     }
 
+    pub fn unsubscribe_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
+        self.cmd_tx.send(RoomCommand::UnsubscribePlayer { player_id })
+    }
+
     pub async fn is_player_known(&self, player_id: PlayerId) -> bool {
         let (tx, rx) = oneshot::channel();
         let _ = self.cmd_tx.send(RoomCommand::IsPlayerKnown { player_id, reply: tx });
         rx.await.unwrap_or(false)
     }
 
-    pub fn reconnect_player(
-        &self,
-        player_id: PlayerId,
-    ) -> Result<(), SendError<RoomCommand>> {
+    pub fn reconnect_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
         self.cmd_tx.send(RoomCommand::PlayerReconnected { player_id })
     }
 
@@ -59,8 +60,12 @@ impl RoomHandle {
         self.cmd_tx.send(RoomCommand::PlayerJoined { player_id, username })
     }
 
-    pub fn unsubscribe_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
-        self.cmd_tx.send(RoomCommand::UnsubscribePlayer { player_id })
+    pub fn network_disconnect(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
+        self.cmd_tx.send(RoomCommand::NetworkDisconnect { player_id })
+    }
+
+    pub fn intentional_leave(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
+        self.cmd_tx.send(RoomCommand::PlayerLeft { player_id })
     }
 
     pub fn remove_player(&self, player_id: PlayerId) -> Result<(), SendError<RoomCommand>> {
@@ -75,6 +80,7 @@ impl RoomHandle {
         let cmd = match action {
             LobbyAction::PlayerReady => RoomCommand::PlayerReady { player_id },
             LobbyAction::PlayAgain => RoomCommand::PlayAgain { player_id },
+            LobbyAction::Leave => RoomCommand::PlayerLeft { player_id }
         };
         self.cmd_tx.send(cmd)
     }

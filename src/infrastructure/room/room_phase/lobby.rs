@@ -3,6 +3,7 @@ use std::{collections::HashSet, time::Instant};
 use async_trait::async_trait;
 use log::{debug, warn};
 use rand::RngExt;
+use tokio::task::JoinHandle;
 use crate::{
     core::{game::state::{Seconds, state_types::Seed}, game_id::GameId, player::{PlayerId, PlayerIdx}}, infrastructure::{
         message::GameMessage, room::utils::{broadcast, send_full_state, start_timer}, server_event::ServerEvent
@@ -14,13 +15,11 @@ use super::*;
 const BOARD_SIZE: usize = 13;
 const HAND_SIZE: usize = 5;
 const START_COUNTDOWN_SECONDS: u64 = 3;
+const GRACE_PERIOD_SECONDS: u64 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LobbyState {
-    /// Waiting for both players to join and/or ready up.
     Waiting,
-    /// Both players are ready and we've committed to transitioning to PlayingPhase.
-    /// Guards against re-entrant commands while the transition is in flight.
     Starting,
 }
 
@@ -29,7 +28,8 @@ pub struct LobbyPhase {
     pub turn_seconds: Seconds,
     seed: Option<Seed>,
     state: LobbyState,
-    ready: HashSet<PlayerId>
+    ready: HashSet<PlayerId>,
+    pending_disconnects: HashMap<PlayerId, JoinHandle<()>>
 }
 
 impl LobbyPhase {
@@ -40,6 +40,7 @@ impl LobbyPhase {
             seed: None,
             state: LobbyState::Waiting,
             ready: HashSet::new(),
+            pending_disconnects: HashMap::new()
         }
     }
  
@@ -130,7 +131,7 @@ impl LobbyPhase {
         Box::new(PlayingPhase {
             game_id: self.game_id.clone(),
             turn_seconds: self.turn_seconds,
-            disconnect_tokens: HashMap::new(),
+            pending_disconnects: HashMap::new(),
             current_player: starter_idx,
             id_to_idx,
             idx_to_id,
@@ -166,6 +167,17 @@ impl RoomPhase for LobbyPhase {
                         player_idx: PlayerIdx(usize::MAX),
                         connected: false,
                     });
+                None
+            }
+
+            RoomCommand::UnsubscribePlayer { player_id } => {
+                // Only remove if they never successfully joined (player_idx is still MAX)
+                // If they did join, we rely on NetworkDisconnect or PlayerLeft.
+                if let Some(info) = players.get(&player_id) {
+                    if info.player_idx == PlayerIdx(usize::MAX) {
+                        players.remove(&player_id);
+                    }
+                }
                 None
             }
             
@@ -283,6 +295,119 @@ impl RoomPhase for LobbyPhase {
                 Some(self.start_game(players, state, timer, cmd_tx))
             }
 
+            RoomCommand::NetworkDisconnect { player_id } => {
+                let player_idx = if let Some(info) = players.get_mut(&player_id) {
+                    info.connected = false;
+                    Some(info.player_idx)
+                } else {
+                    None
+                };
+
+                if let Some(player_idx) = player_idx {
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerDisconnected {
+                            player_id,
+                            player_idx,
+                            grace_period_seconds: GRACE_PERIOD_SECONDS,
+                        },
+                    );
+
+                    let tx = cmd_tx.clone();
+                    let handle = tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(GRACE_PERIOD_SECONDS)).await;
+                        let _ = tx.send(RoomCommand::DisconnectTimeout { player_id });
+                    });
+
+                    self.pending_disconnects.insert(player_id, handle);
+                }
+                None
+            }
+
+            RoomCommand::PlayerReconnected { player_id } => {
+                if let Some(handle) = self.pending_disconnects.remove(&player_id) {
+                    handle.abort();
+                }
+
+                let player_idx = if let Some(info) = players.get_mut(&player_id) {
+                    info.connected = true;
+                    Some(info.player_idx)
+                } else {
+                    None
+                };
+
+                if let Some(player_idx) = player_idx {
+                    // ✅ THE FIX: Send existing players to the reconnecting player.
+                    // This ensures that if the client lost state or incorrectly 
+                    // triggered a reconnect instead of a join, it still gets the full roster.
+                    let reconnecting_tx = players[&player_id].tx.clone();
+                    for (existing_id, existing_info) in players.iter() {
+                        if *existing_id != player_id && existing_info.player_idx != PlayerIdx(usize::MAX) {
+                            let _ = reconnecting_tx.send(GameMessage {
+                                to: None,
+                                event: ServerEvent::PlayerJoined {
+                                    player_id: *existing_id,
+                                    player_idx: existing_info.player_idx,
+                                    username: existing_info.username.clone(),
+                                },
+                            });
+                        }
+                    }
+
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerReconnected {
+                            player_id,
+                            player_idx,
+                            turn_seconds_remaining: Seconds(0),
+                        },
+                    );
+                } else {
+                    warn!("PlayerReconnected for unknown player {:?}, ignoring", player_id);
+                }
+                None
+            }
+
+            RoomCommand::PlayerLeft { player_id } => {
+                if let Some(handle) = self.pending_disconnects.remove(&player_id) {
+                    handle.abort();
+                }
+                if let Some(info) = players.remove(&player_id) {
+                    self.ready.remove(&player_id);
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerLeft {
+                            player_id,
+                            player_idx: info.player_idx,
+                        },
+                    );
+                }
+
+                if players.is_empty() {
+                    let _ = cmd_tx.send(RoomCommand::Shutdown);
+                }
+                None
+            }
+
+            RoomCommand::DisconnectTimeout { player_id } => {
+                self.pending_disconnects.remove(&player_id);
+                if let Some(info) = players.remove(&player_id) {
+                    self.ready.remove(&player_id);
+                    broadcast(
+                        players,
+                        &ServerEvent::PlayerLeft {
+                            player_id,
+                            player_idx: info.player_idx,
+                        },
+                    );
+                }
+
+                if players.is_empty() {
+                    let _ = cmd_tx.send(RoomCommand::Shutdown);
+                }
+                None
+            }
+
             RoomCommand::GameStartingTick { seconds_remaining } => {
                 if self.state != LobbyState::Starting {
                     return None;
@@ -298,47 +423,9 @@ impl RoomPhase for LobbyPhase {
                 None
             }
 
-            RoomCommand::PlayerLeft { player_id } => {
-                if let Some(info) = players.remove(&player_id) {
-                    self.ready.remove(&player_id);
-                    broadcast(
-                        players,
-                        &ServerEvent::PlayerLeft {
-                            player_id,
-                            player_idx: info.player_idx,
-                        },
-                    );
-                }
- 
-                if players.is_empty() {
-                    let _ = cmd_tx.send(RoomCommand::Shutdown);
-                }
- 
-                None
-            }
-
             RoomCommand::IsPlayerKnown { player_id, reply } => {
                 let known = players.contains_key(&player_id);
                 let _ = reply.send(known);
-                None
-            }
-
-            RoomCommand::PlayerReconnected { player_id } => {
-                if let Some(info) = players.get_mut(&player_id) {
-                    info.connected = true;
-                }
-                None
-            }
-
-            RoomCommand::UnsubscribePlayer { player_id } => {
-                if let Some(info) = players.get_mut(&player_id) {
-                    info.connected = false;
-
-                    // Keep the player in the lobby and keep their ready state.
-                    // A socket disconnect is not an intentional leave.
-                    debug!("Player {:?} unsubscribed from lobby", player_id);
-                }
-
                 None
             }
 
