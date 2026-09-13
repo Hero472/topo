@@ -291,7 +291,7 @@ impl RoomPhase for PlayingPhase {
                 };
 
                 if let Some(idx) = player_idx {
-                    if let Some(event) = build_full_state(game_state, idx, String::from("Opponent")) {
+                    if let Some(event) = build_full_state(game_state, player_id, idx) {
                         send_to(players, player_id, event);
                     }
 

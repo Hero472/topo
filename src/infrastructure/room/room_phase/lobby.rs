@@ -6,7 +6,7 @@ use rand::RngExt;
 use tokio::task::JoinHandle;
 use crate::{
     core::{game::state::{Seconds, state_types::Seed}, game_id::GameId, player::{PlayerId, PlayerIdx}}, infrastructure::{
-        message::GameMessage, room::utils::{broadcast, send_full_state, start_timer}, server_event::ServerEvent
+        full_state::build_lobby_full_state, message::GameMessage, room::utils::{broadcast, send_full_state, start_timer}, server_event::ServerEvent
     }
 };
 
@@ -94,6 +94,7 @@ impl LobbyPhase {
                 .find(|b| b.player_idx == pinfo.player_idx)
             {
                 board.player_id = Some(pid);
+                board.username = pinfo.username.clone();
             }
         }
  
@@ -164,8 +165,10 @@ impl RoomPhase for LobbyPhase {
                     .or_insert(PlayerInfo {
                         username: String::new(),
                         tx: sender,
+                        player_id,
                         player_idx: PlayerIdx(usize::MAX),
                         connected: false,
+                        is_ready: false
                     });
                 None
             }
@@ -245,17 +248,25 @@ impl RoomPhase for LobbyPhase {
             }
 
             RoomCommand::PlayerReady { player_id } => {
-                if !players.contains_key(&player_id) {
-                    warn!("PlayerReady for unknown player {:?}", player_id);
+                let info = match players.get_mut(&player_id) {
+                    Some(info) => info,
+                    None => {
+                        warn!("PlayerReady for unknown player {:?}", player_id);
+                        return None;
+                    }
+                };
+
+                if info.is_ready {
                     return None;
                 }
 
-                if self.ready.insert(player_id) {
-                    broadcast(
-                        players,
-                        &ServerEvent::PlayerReady { player_id },
-                    );
-                }
+                info.is_ready = true;
+                self.ready.insert(player_id);
+
+                broadcast(
+                    players,
+                    &ServerEvent::PlayerReady { player_id },
+                );
 
                 if self.all_players_ready(players) {
                     self.state = LobbyState::Starting;
@@ -264,14 +275,11 @@ impl RoomPhase for LobbyPhase {
 
                     tokio::spawn(async move {
                         for seconds in (1..=3).rev() {
-                            // Tell the clients how long remains.
                             let _ = tx.send(RoomCommand::GameStartingTick {
                                 seconds_remaining: seconds,
                             });
 
-                            tokio::time::sleep(
-                                std::time::Duration::from_secs(1)
-                            ).await;
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
 
                         let _ = tx.send(RoomCommand::StartGame);
@@ -336,29 +344,24 @@ impl RoomPhase for LobbyPhase {
                     None
                 };
 
-                if let Some(player_idx) = player_idx {
-                    // ✅ THE FIX: Send existing players to the reconnecting player.
-                    // This ensures that if the client lost state or incorrectly 
-                    // triggered a reconnect instead of a join, it still gets the full roster.
-                    let reconnecting_tx = players[&player_id].tx.clone();
-                    for (existing_id, existing_info) in players.iter() {
-                        if *existing_id != player_id && existing_info.player_idx != PlayerIdx(usize::MAX) {
-                            let _ = reconnecting_tx.send(GameMessage {
-                                to: None,
-                                event: ServerEvent::PlayerJoined {
-                                    player_id: *existing_id,
-                                    player_idx: existing_info.player_idx,
-                                    username: existing_info.username.clone(),
-                                },
-                            });
-                        }
-                    }
+                if let Some(idx) = player_idx {
+                    let full_state_event = build_lobby_full_state(
+                        self.game_id.clone(),
+                        player_id,
+                        idx,
+                        players,
+                    );
+                    
+                    let _ = players[&player_id].tx.send(GameMessage {
+                        to: None,
+                        event: full_state_event,
+                    });
 
                     broadcast(
                         players,
                         &ServerEvent::PlayerReconnected {
                             player_id,
-                            player_idx,
+                            player_idx: idx,
                             turn_seconds_remaining: Seconds(0),
                         },
                     );

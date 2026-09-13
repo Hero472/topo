@@ -177,7 +177,15 @@ pub async fn ws_handler(
                             _ => {}
                         },
                         Some(Err(e)) => {
-                            log::error!("WebSocket receive error for player {:?}: {}", player_id, e);
+                            if let actix_ws::ProtocolError::Io(ref io_err) = e {
+                                log::info!(
+                                    "Client disconnected (I/O: {:?}) for player {:?}", 
+                                    io_err, 
+                                    player_id
+                                );
+                            } else {
+                                log::error!("WebSocket protocol error for player {:?}: {}", player_id, e);
+                            }
                             break;
                         }
                         None => {
@@ -189,10 +197,6 @@ pub async fn ws_handler(
             }
         }
 
-        // ── 6. Cleanup on disconnect ──
-        // We use `network_disconnect` to trigger the 30-second grace period.
-        // If the player intentionally clicked "Leave", the frontend should have 
-        // sent `LobbyAction::Leave` (which maps to `PlayerLeft`), bypassing this.
         log::info!("Player {:?} network disconnected, starting grace period", player_id);
         let _ = room_clone.network_disconnect(player_id);
     });

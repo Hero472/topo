@@ -1,28 +1,56 @@
 use crate::{
-    core::{game::state::GameState, player::PlayerIdx},
-    infrastructure::{
-        server_event::{OpponentView, ServerEvent},
-        views::{PersonalPileView, PlayerBoardView}
+    core::{game::state::GameState, game_id::GameId, player::{PlayerId, PlayerIdx}}, infrastructure::{
+        room::player_info::PlayerInfo, server_event::{FullState, LobbyPlayerView, OpponentView, RoomSnapshot, ServerEvent}, views::{PersonalPileView, PlayerBoardView}
     }
 };
 
 const PERSONAL_PREVIEW_SIZE: usize = 7;
 const DEALER_PREVIEW_SIZE: usize = 7;
 
+pub fn build_lobby_full_state(
+    game_id: GameId,
+    player_id: PlayerId,
+    player_idx: PlayerIdx,
+    players_info: &std::collections::HashMap<PlayerId, PlayerInfo>, 
+) -> ServerEvent {
+    let players_view = players_info
+        .values()
+        .map(|info| LobbyPlayerView {
+            player_id: info.player_id,
+            player_idx: info.player_idx,
+            username: info.username.clone(),
+            is_ready: info.is_ready,
+            is_disconnected: !info.connected,
+        })
+        .collect();
+
+    ServerEvent::FullState {
+        state: FullState {
+            player_id,
+            player_idx,
+            snapshot: RoomSnapshot::Lobby {
+                game_id,
+                players: players_view,
+            },
+        },
+    }
+}
+
 pub fn build_full_state(
     game_state: &GameState,
-    player_idx: PlayerIdx,
-    opponent_username: String,
+    player_id: PlayerId,
+    player_idx: PlayerIdx
 ) -> Option<ServerEvent> {
-    let your_board = game_state
+
+    let your_board_state = game_state
         .players
         .iter()
         .find(|p| p.player_idx == player_idx)?;
 
     let personal_view = PersonalPileView {
-        count: your_board.personal.len(),
-        top: your_board.personal_top().cloned(),
-        colors: your_board
+        count: your_board_state.personal.len(),
+        top: your_board_state.personal_top().cloned(),
+        colors: your_board_state
             .personal
             .iter()
             .rev()
@@ -33,10 +61,10 @@ pub fn build_full_state(
     };
 
     let your_board_view = PlayerBoardView {
-        player_idx: your_board.player_idx,
+        player_idx: your_board_state.player_idx,
         personal: personal_view,
-        side: your_board.side.clone(),
-        hand: your_board.hand.clone(),
+        side: your_board_state.side.clone(),
+        hand: your_board_state.hand.clone(),
     };
 
     let opponent = game_state
@@ -45,12 +73,8 @@ pub fn build_full_state(
         .find(|p| p.player_idx != player_idx)
         .map(|opp| OpponentView {
             player_idx: opp.player_idx,
-            username: opponent_username,
-            hand: opp
-                .hand
-                .iter()
-                .map(|card| card.dummy_card())
-                .collect(),
+            username: opp.username.clone(),
+            hand: opp.hand.iter().map(|card| card.dummy_card()).collect(),
             personal_count: opp.personal.len(),
             personal_top: opp.personal_top().cloned(),
             side: opp.side.clone(),
@@ -77,41 +101,66 @@ pub fn build_full_state(
         .scale_manager
         .scales
         .iter()
-        .map(|opt| opt.clone())
+        .cloned()
         .collect();
 
+    let is_your_turn = game_state
+        .players
+        .get(game_state.current_turn.as_usize())
+        .map(|p| p.player_idx)
+        .unwrap_or(PlayerIdx(0))
+        == player_idx;
+
     Some(ServerEvent::FullState {
-        player_id: your_board.player_id.expect("player id always expected for FullState"),
-        your_board: your_board_view,
-        your_turn: game_state
-            .players
-            .get(game_state.current_turn.as_usize())
-            .map(|p| p.player_idx)
-            .unwrap_or(PlayerIdx(0))
-            == player_idx,
-        opponent,
-        scales,
-        dealer_preview,
-        dealer_count: game_state.card_dealer.draw_pile.remaining(),
-        turn_seconds_remaining: game_state.turn_seconds,
+        state: FullState {
+            player_id,
+            player_idx,
+            snapshot: RoomSnapshot::Playing {
+                your_board: your_board_view,
+                your_turn: is_your_turn,
+                opponent,
+                scales,
+                dealer_preview,
+                dealer_count: game_state.card_dealer.draw_pile.remaining(),
+                turn_seconds_remaining: game_state.turn_seconds,
+            },
+        },
     })
+}
+
+pub fn build_game_over_full_state(
+    player_id: PlayerId,
+    player_idx: PlayerIdx,
+    winner_id: PlayerId,
+    winner_idx: PlayerIdx,
+    reason: String,
+) -> ServerEvent {
+    ServerEvent::FullState {
+        state: FullState {
+            player_id,
+            player_idx,
+            snapshot: RoomSnapshot::GameOver {
+                winner_id,
+                winner_idx,
+                reason,
+            },
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
 
-use super::*;
+    use super::*;
     use crate::core::game::board::PlayerBoard;
     use crate::core::game::card::{Card, Suit};
     use crate::core::game::dealer::CardDealer;
     use crate::core::game::deck::DeckColor;
     use crate::core::game::state::{GameState, Seconds};
-use crate::core::game::state::state_types::Seed;
-use crate::core::player::PlayerId;
+    use crate::core::game::state::state_types::Seed;
+    use crate::core::player::PlayerId;
 
-    // Helper: create a dummy Card with a given color.
-    // Fill all required Card fields with dummy values.
     fn dummy_card(deck: DeckColor) -> Card {
         Card {
             deck,
@@ -120,8 +169,14 @@ use crate::core::player::PlayerId;
         }
     }
 
-    fn make_player_board(player_idx: PlayerIdx, personal: Vec<Card>, hand: Vec<Card>) -> PlayerBoard {
-        let mut board = PlayerBoard::new(PlayerId(Uuid::nil()), player_idx);
+    fn make_player_board(
+        player_idx: PlayerIdx,
+        username: &str,
+        personal: Vec<Card>,
+        hand: Vec<Card>,
+    ) -> PlayerBoard {
+        let mut board = PlayerBoard::new(player_idx, username.to_string());
+        board.player_id = Some(PlayerId(Uuid::nil()));
         board.set_personal(personal);
         board.hand = hand;
         board
@@ -167,7 +222,7 @@ use crate::core::player::PlayerId;
             Seconds(30),
         );
         // Pass PlayerIdx(42) – no such player in state
-        let result = build_full_state(&state, PlayerIdx(42), "opponent".to_string());
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(42));
         assert!(result.is_none());
     }
 
@@ -180,8 +235,8 @@ use crate::core::player::PlayerId;
         ];
         let hand_cards = vec![dummy_card(DeckColor::Red)];
 
-        let your_board = make_player_board(PlayerIdx(1), personal_cards.clone(), hand_cards.clone());
-        let opponent_board = make_player_board(PlayerIdx(2), vec![], vec![]);
+        let your_board = make_player_board(PlayerIdx(1), "You", personal_cards.clone(), hand_cards.clone());
+        let opponent_board = make_player_board(PlayerIdx(2), "Alice", vec![], vec![]);
 
         let state = make_test_game_state(
             vec![your_board, opponent_board],
@@ -191,38 +246,42 @@ use crate::core::player::PlayerId;
             Seconds(42),
         );
 
-        let result = build_full_state(&state, PlayerIdx(1), "Alice".to_string());
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(1));
         assert!(result.is_some());
 
-        if let Some(ServerEvent::FullState {
-            your_board,
-            your_turn,
-            opponent,
-            dealer_preview,
-            dealer_count,
-            turn_seconds_remaining,
-            ..
-        }) = result
-        {
-            assert_eq!(your_board.player_idx, PlayerIdx(1));
-            assert_eq!(your_board.personal.count, 3);
-            assert_eq!(your_board.personal.top, personal_cards.last().cloned());
+        if let Some(ServerEvent::FullState { state: full_state }) = result {
+            if let RoomSnapshot::Playing {
+                your_board,
+                your_turn,
+                opponent,
+                dealer_preview,
+                dealer_count,
+                turn_seconds_remaining,
+                ..
+            } = full_state.snapshot
+            {
+                assert_eq!(your_board.player_idx, PlayerIdx(1));
+                assert_eq!(your_board.personal.count, 3);
+                assert_eq!(your_board.personal.top, personal_cards.last().cloned());
 
-            let expected_colors = vec![DeckColor::Red, DeckColor::Blue, DeckColor::Red];
-            assert_eq!(your_board.personal.colors, expected_colors);
-            assert_eq!(your_board.hand, hand_cards);
+                let expected_colors = vec![DeckColor::Red, DeckColor::Blue, DeckColor::Red];
+                assert_eq!(your_board.personal.colors, expected_colors);
+                assert_eq!(your_board.hand, hand_cards);
 
-            assert!(your_turn);
+                assert!(your_turn);
 
-            assert_eq!(opponent.player_idx, PlayerIdx(2));
-            assert_eq!(opponent.username, "Alice");
-            assert_eq!(opponent.hand.len(), 0);
-            assert_eq!(opponent.personal_count, 0);
-            assert_eq!(opponent.personal_top, None);
+                assert_eq!(opponent.player_idx, PlayerIdx(2));
+                assert_eq!(opponent.username, "Alice"); // Now correctly matches the test setup
+                assert_eq!(opponent.hand.len(), 0);
+                assert_eq!(opponent.personal_count, 0);
+                assert_eq!(opponent.personal_top, None);
 
-            assert_eq!(dealer_preview, vec![DeckColor::Blue]);
-            assert_eq!(dealer_count, 15);
-            assert_eq!(turn_seconds_remaining, Seconds(42));
+                assert_eq!(dealer_preview, vec![DeckColor::Blue]);
+                assert_eq!(dealer_count, 15);
+                assert_eq!(turn_seconds_remaining, Seconds(42));
+            } else {
+                panic!("Expected RoomSnapshot::Playing");
+            }
         } else {
             panic!("Wrong ServerEvent variant");
         }
@@ -230,8 +289,8 @@ use crate::core::player::PlayerId;
 
     #[test]
     fn your_turn_false_when_not_current_player() {
-        let your_board = make_player_board(PlayerIdx(1), vec![], vec![]);
-        let opponent_board = make_player_board(PlayerIdx(2), vec![], vec![]);
+        let your_board = make_player_board(PlayerIdx(1), "You", vec![], vec![]);
+        let opponent_board = make_player_board(PlayerIdx(2), "Bob", vec![], vec![]);
         let state = make_test_game_state(
             vec![your_board, opponent_board],
             PlayerIdx(1),
@@ -239,9 +298,14 @@ use crate::core::player::PlayerId;
             0,
             Seconds(30),
         );
-        let result = build_full_state(&state, PlayerIdx(1), "Bob".to_string());
-        if let Some(ServerEvent::FullState { your_turn, .. }) = result {
-            assert!(!your_turn);
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(1));
+        
+        if let Some(ServerEvent::FullState { state: full_state }) = result {
+            if let RoomSnapshot::Playing { your_turn, .. } = full_state.snapshot {
+                assert!(!your_turn);
+            } else {
+                panic!("Expected RoomSnapshot::Playing");
+            }
         } else {
             panic!("Expected FullState");
         }
@@ -249,8 +313,8 @@ use crate::core::player::PlayerId;
 
     #[test]
     fn empty_personal_pile() {
-        let your_board = make_player_board(PlayerIdx(1), vec![], vec![]);
-        let opponent_board = make_player_board(PlayerIdx(2), vec![], vec![]);
+        let your_board = make_player_board(PlayerIdx(1), "You", vec![], vec![]);
+        let opponent_board = make_player_board(PlayerIdx(2), "Charlie", vec![], vec![]);
         let state = make_test_game_state(
             vec![your_board, opponent_board],
             PlayerIdx(1),
@@ -258,11 +322,16 @@ use crate::core::player::PlayerId;
             10,
             Seconds(5),
         );
-        let result = build_full_state(&state, PlayerIdx(1), "Charlie".to_string());
-        if let Some(ServerEvent::FullState { your_board, .. }) = result {
-            assert_eq!(your_board.personal.count, 0);
-            assert_eq!(your_board.personal.top, None);
-            assert!(your_board.personal.colors.is_empty());
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(1));
+        
+        if let Some(ServerEvent::FullState { state: full_state }) = result {
+            if let RoomSnapshot::Playing { your_board, .. } = full_state.snapshot {
+                assert_eq!(your_board.personal.count, 0);
+                assert_eq!(your_board.personal.top, None);
+                assert!(your_board.personal.colors.is_empty());
+            } else {
+                panic!("Expected RoomSnapshot::Playing");
+            }
         } else {
             panic!("Expected FullState");
         }
@@ -270,8 +339,8 @@ use crate::core::player::PlayerId;
 
     #[test]
     fn dealer_top_none_when_draw_pile_empty() {
-        let your_board = make_player_board(PlayerIdx(1), vec![], vec![]);
-        let opponent_board = make_player_board(PlayerIdx(2), vec![], vec![]);
+        let your_board = make_player_board(PlayerIdx(1), "You", vec![], vec![]);
+        let opponent_board = make_player_board(PlayerIdx(2), "Dave", vec![], vec![]);
         let state = make_test_game_state(
             vec![your_board, opponent_board],
             PlayerIdx(1),
@@ -279,9 +348,14 @@ use crate::core::player::PlayerId;
             0,
             Seconds(10),
         );
-        let result = build_full_state(&state, PlayerIdx(1), "Dave".to_string());
-        if let Some(ServerEvent::FullState { dealer_preview, .. }) = result {
-            assert_eq!(dealer_preview, vec![]);
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(1));
+        
+        if let Some(ServerEvent::FullState { state: full_state }) = result {
+            if let RoomSnapshot::Playing { dealer_preview, .. } = full_state.snapshot {
+                assert_eq!(dealer_preview, vec![]);
+            } else {
+                panic!("Expected RoomSnapshot::Playing");
+            }
         } else {
             panic!("Expected FullState");
         }
@@ -289,23 +363,22 @@ use crate::core::player::PlayerId;
 
     #[test]
     fn opponent_not_found_uses_default() {
-        let your_board = make_player_board(PlayerIdx(1), vec![], vec![]);
-        // Only one player – opponent will be missing
-        let state = make_test_game_state(
-            vec![your_board],
-            PlayerIdx(1),
-            None,
-            5,
-            Seconds(20),
-        );
-        let result = build_full_state(&state, PlayerIdx(1), "Eve".to_string());
-        if let Some(ServerEvent::FullState { opponent, .. }) = result {
-            assert_eq!(opponent.player_idx, PlayerIdx(0)); // default placeholder
-            assert_eq!(opponent.username, String::new());
-            assert_eq!(opponent.hand.len(), 0);
-            assert_eq!(opponent.personal_count, 0);
-            assert_eq!(opponent.personal_top, None);
-            assert_eq!(opponent.side, [vec![], vec![], vec![], vec![]]);
+        let your_board = make_player_board(PlayerIdx(1), "You", vec![], vec![]);
+        let state = make_test_game_state(vec![your_board], PlayerIdx(1), None, 5, Seconds(20));
+        
+        let result = build_full_state(&state, PlayerId(Uuid::nil()), PlayerIdx(1));
+        
+        if let Some(ServerEvent::FullState { state: full_state }) = result {
+            if let RoomSnapshot::Playing { opponent, .. } = full_state.snapshot {
+                assert_eq!(opponent.player_idx, PlayerIdx(0)); // default placeholder
+                assert_eq!(opponent.username, String::new());
+                assert_eq!(opponent.hand.len(), 0);
+                assert_eq!(opponent.personal_count, 0);
+                assert_eq!(opponent.personal_top, None);
+                assert_eq!(opponent.side, [vec![], vec![], vec![], vec![]]);
+            } else {
+                panic!("Expected RoomSnapshot::Playing");
+            }
         } else {
             panic!("Expected FullState");
         }

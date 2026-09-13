@@ -64,7 +64,7 @@ pub fn send_full_state(players: &HashMap<PlayerId, PlayerInfo>, state: &GameStat
             .map(|(_, opp_info)| opp_info.username.clone())
             .unwrap_or_default();
 
-        if let Some(event) = build_full_state(state, info.player_idx, opp_name) {
+        if let Some(event) = build_full_state(state, info.player_id, info.player_idx) {
             send_to(players, *pid, event);
         } else {
             warn!("build_full_state returned None for player {:?}", pid);

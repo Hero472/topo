@@ -10,15 +10,9 @@ use rand::RngExt;
 
 use crate::{
     core::{
-        game::state::{state_types::Seed, GameState, Seconds},
-        game_id::GameId,
-        player::{PlayerId, PlayerIdx},
-    },
-    infrastructure::{
-        error::ErrorCode,
-        full_state::build_full_state,
-        room::utils::{broadcast, send_to, start_timer},
-        server_event::ServerEvent,
+        game::state::{GameState, Seconds, state_types::Seed}, game_id::GameId, player::{PlayerId, PlayerIdx},
+    }, infrastructure::{
+        error::ErrorCode, full_state::{build_full_state, build_game_over_full_state}, room::utils::{broadcast, send_to, start_timer}, server_event::ServerEvent,
     },
 };
 
@@ -103,7 +97,6 @@ impl OverPhase {
 
         fresh_state.start_game();
 
-        // Restore the PlayerId -> PlayerIdx relationship into the new GameState.
         for (&player_id, &player_idx) in &self.participants {
             if let Some(board) = fresh_state
                 .players
@@ -111,6 +104,10 @@ impl OverPhase {
                 .find(|board| board.player_idx == player_idx)
             {
                 board.player_id = Some(player_id);
+
+                if let Some(pinfo) = players.get(&player_id) {
+                    board.username = pinfo.username.clone();
+                }
             }
         }
 
@@ -141,7 +138,7 @@ impl OverPhase {
         // Send full state to all connected players
         for &player_id in players.keys() {
             if let Some(idx) = self.participants.get(&player_id) {
-                if let Some(event) = build_full_state(game_state, *idx, String::from("Opponent")) {
+                if let Some(event) = build_full_state(game_state, player_id, *idx) {
                     send_to(players, player_id, event);
                 }
             }
@@ -161,7 +158,7 @@ impl OverPhase {
         Box::new(PlayingPhase {
             game_id: self.game_id.clone(),
             turn_seconds: self.turn_seconds,
-            pending_disconnects: HashMap::new(), // ✅ Updated to match new PlayingPhase
+            pending_disconnects: HashMap::new(),
             current_player: starter_idx,
             id_to_idx,
             idx_to_id,
@@ -189,31 +186,28 @@ impl RoomPhase for OverPhase {
                     None => return None,
                 };
 
-                players.insert(
-                    player_id,
-                    PlayerInfo {
+                players.entry(player_id)
+                    .and_modify(|info| {
+                        info.tx = sender.clone();
+                        info.connected = true;
+                    })
+                    .or_insert(PlayerInfo {
                         username: String::new(),
                         tx: sender,
+                        player_id,
                         player_idx,
                         connected: true,
-                    },
-                );
+                        is_ready: false,
+                    });
 
-                if let Some(game_state) = state.as_ref() {
-                    if let Some(event) = build_full_state(game_state, player_idx, String::from("Opponent")) {
-                        send_to(players, player_id, event);
-                    }
-                }
-
-                send_to(
-                    players,
+                let event = build_game_over_full_state(
                     player_id,
-                    ServerEvent::GameOver {
-                        winner_id: self.winner_id,
-                        winner_idx: self.winner_idx,
-                        reason: self.reason.clone(),
-                    },
+                    player_idx,
+                    self.winner_id,
+                    self.winner_idx,
+                    self.reason.clone(),
                 );
+                send_to(players, player_id, event);
 
                 broadcast(
                     players,
@@ -227,8 +221,6 @@ impl RoomPhase for OverPhase {
             }
 
             RoomCommand::UnsubscribePlayer { player_id } => {
-                // Only remove if they never successfully joined (player_idx is still MAX)
-                // If they did join, we rely on NetworkDisconnect or PlayerLeft.
                 if let Some(info) = players.get(&player_id) {
                     if info.player_idx == PlayerIdx(usize::MAX) {
                         players.remove(&player_id);
@@ -267,7 +259,6 @@ impl RoomPhase for OverPhase {
                 None
             }
 
-            // ✅ NEW: Reconnect cancels grace period and restores state
             RoomCommand::PlayerReconnected { player_id } => {
                 if let Some(handle) = self.pending_disconnects.remove(&player_id) {
                     handle.abort();
@@ -281,21 +272,14 @@ impl RoomPhase for OverPhase {
                 };
 
                 if let Some(idx) = player_idx {
-                    if let Some(game_state) = state.as_ref() {
-                        if let Some(event) = build_full_state(game_state, idx, String::from("Opponent")) {
-                            send_to(players, player_id, event);
-                        }
-                    }
-
-                    send_to(
-                        players,
+                    let event = build_game_over_full_state(
                         player_id,
-                        ServerEvent::GameOver {
-                            winner_id: self.winner_id,
-                            winner_idx: self.winner_idx,
-                            reason: self.reason.clone(),
-                        },
+                        idx,
+                        self.winner_id,
+                        self.winner_idx,
+                        self.reason.clone(),
                     );
+                    send_to(players, player_id, event);
 
                     broadcast(
                         players,
@@ -309,7 +293,6 @@ impl RoomPhase for OverPhase {
                 None
             }
 
-            // Intentional leave (bypasses grace period, removes immediately)
             RoomCommand::PlayerLeft { player_id } => {
                 if let Some(handle) = self.pending_disconnects.remove(&player_id) {
                     handle.abort();
@@ -336,16 +319,15 @@ impl RoomPhase for OverPhase {
                 None
             }
 
-            // ✅ NEW: Grace period expired, actually remove the player
             RoomCommand::DisconnectTimeout { player_id } => {
                 self.pending_disconnects.remove(&player_id);
 
                 if let Some(info) = players.get(&player_id) {
                     if info.connected {
-                        return None; // Reconnected just in time
+                        return None;
                     }
                 } else {
-                    return None; // Already removed
+                    return None;
                 }
 
                 let idx = self.participants.get(&player_id).copied().unwrap_or(PlayerIdx(usize::MAX));
@@ -370,12 +352,10 @@ impl RoomPhase for OverPhase {
             }
 
             RoomCommand::PlayAgain { player_id } => {
-                // Only original participants may request a rematch.
                 if !self.participants.contains_key(&player_id) {
                     return None;
                 }
 
-                // Player must currently be connected.
                 if !players.contains_key(&player_id) {
                     return None;
                 }
@@ -398,7 +378,6 @@ impl RoomPhase for OverPhase {
                 let all_present = self.participants.keys().all(|id| players.contains_key(id));
                 let all_agreed = self.participants.keys().all(|id| self.play_again.contains(id));
 
-                // Wait until both players are connected and both have pressed "Play Again".
                 if !all_present || !all_agreed {
                     return None;
                 }

@@ -111,14 +111,8 @@ pub enum ServerEvent {
 
     // ── Full state sync (join/reconnect) ──
     FullState {
-        player_id: PlayerId,
-        your_board: PlayerBoardView,
-        your_turn: bool,
-        opponent: OpponentView,
-        scales: Vec<Option<Scale>>,
-        dealer_preview: Vec<DeckColor>,
-        dealer_count: usize,
-        turn_seconds_remaining: Seconds,
+        #[serde(flatten)]
+        state: FullState,
     },
 
     PlayerDisconnected {
@@ -143,6 +137,47 @@ pub enum ServerEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         details: Option<ErrorDetails>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FullState {
+    pub player_id: PlayerId,
+    pub player_idx: PlayerIdx,
+    
+    #[serde(flatten)]
+    pub snapshot: RoomSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum RoomSnapshot {
+    Lobby {
+        game_id: GameId,
+        players: Vec<LobbyPlayerView>,
+    },
+    Playing {
+        your_board: PlayerBoardView,
+        your_turn: bool,
+        opponent: OpponentView,
+        scales: Vec<Option<Scale>>,
+        dealer_preview: Vec<DeckColor>,
+        dealer_count: usize,
+        turn_seconds_remaining: Seconds,
+    },
+    GameOver {
+        winner_id: PlayerId,
+        winner_idx: PlayerIdx,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LobbyPlayerView {
+    pub player_id: PlayerId,
+    pub player_idx: PlayerIdx,
+    pub username: String,
+    pub is_ready: bool,
+    pub is_disconnected: bool, 
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

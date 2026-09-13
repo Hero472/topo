@@ -7,6 +7,7 @@ pub const NORMAL_HAND_SIZE: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerBoard {
+    pub username: String,
     pub player_id: Option<PlayerId>,
     pub player_idx: PlayerIdx,
     pub personal:  Vec<Card>,
@@ -15,9 +16,10 @@ pub struct PlayerBoard {
 }
 
 impl PlayerBoard {
-    pub fn new(player_id: PlayerId, player_idx: PlayerIdx) -> Self {
+    pub fn new(player_idx: PlayerIdx, username: String) -> Self {
         Self {
-            player_id: Some(player_id),
+            username,
+            player_id: None,
             player_idx,
             personal: vec![],
             side: Default::default(),
@@ -123,7 +125,7 @@ mod tests {
 
     #[test]
     fn new_board_is_empty() {
-        let board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert_eq!(board.player_idx, PlayerIdx(0));
         assert!(board.personal.is_empty());
         assert!(board.side.iter().all(|s| s.is_empty()));
@@ -132,7 +134,7 @@ mod tests {
 
     #[test]
     fn set_personal_replaces_cards() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         let initial = cards(1..=13);
         board.set_personal(initial.clone());
         assert_eq!(board.personal, initial);
@@ -141,20 +143,20 @@ mod tests {
 
     #[test]
     fn personal_top_returns_last() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.set_personal(cards(1..=3));
         assert_eq!(board.personal_top().unwrap().value, 3);
     }
 
     #[test]
     fn personal_top_empty() {
-        let board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(board.personal_top().is_none());
     }
 
     #[test]
     fn pop_personal_removes_and_returns_top() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.set_personal(cards(1..=3));
         let card = board.pop_personal().unwrap();
         assert_eq!(card.value, 3);
@@ -164,13 +166,13 @@ mod tests {
 
     #[test]
     fn pop_personal_empty_returns_none() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(board.pop_personal().is_none());
     }
 
     #[test]
     fn draw_to_hand_adds_card() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.draw_to_hand(card(5));
         assert_eq!(board.hand_len(), 1);
         assert_eq!(board.hand[0].value, 5);
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn hand_can_exceed_normal_size() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         // Simulate start of turn: already have 5, draw one -> 6.
         for _ in 0..5 {
             board.draw_to_hand(card(1));
@@ -191,7 +193,7 @@ mod tests {
 
     #[test]
     fn take_from_hand_valid_index() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         for v in 1..=5 {
             board.draw_to_hand(card(v));
         }
@@ -202,7 +204,7 @@ mod tests {
 
     #[test]
     fn take_from_hand_out_of_bounds_returns_none() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.draw_to_hand(card(1));
         assert!(board.take_from_hand(1).is_none()); // only index 0 valid
         assert!(board.take_from_hand(5).is_none());
@@ -211,7 +213,7 @@ mod tests {
 
     #[test]
     fn place_on_side_valid_stack() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(board.place_on_side(StackIdx(0), card(1)));
         assert_eq!(board.side[0].len(), 1);
         assert_eq!(board.side[0][0].value, 1);
@@ -221,7 +223,7 @@ mod tests {
 
     #[test]
     fn place_on_side_invalid_stack_fails() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(!board.place_on_side(StackIdx(4), card(1)));
         assert!(!board.place_on_side(StackIdx(10), card(1)));
         // No side stack modified
@@ -230,7 +232,7 @@ mod tests {
 
     #[test]
     fn take_from_side_returns_top() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.place_on_side(StackIdx(2), card(5));
         board.place_on_side(StackIdx(2), card(7));
         let taken = board.take_from_side(StackIdx(2)).unwrap();
@@ -241,19 +243,19 @@ mod tests {
 
     #[test]
     fn take_from_side_empty_stack_returns_none() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(board.take_from_side(StackIdx(0)).is_none());
     }
 
     #[test]
     fn take_from_side_invalid_stack_returns_none() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         assert!(board.take_from_side(StackIdx(4)).is_none());
     }
 
     #[test]
     fn has_won_true_only_when_personal_and_hand_empty() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         // Empty personal and empty hand -> win
         assert!(board.has_won());
 
@@ -273,7 +275,7 @@ mod tests {
 
     #[test]
     fn side_stacks_do_not_affect_win() {
-        let mut board = PlayerBoard::new(PlayerId(uuid::Uuid::new_v4()), PlayerIdx(0));
+        let mut board = PlayerBoard::new(PlayerIdx(usize::MAX), String::new());
         board.place_on_side(StackIdx(0), card(1));
         // Still true because personal and hand are empty
         assert!(board.has_won());
