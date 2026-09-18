@@ -20,7 +20,7 @@ use super::*;
 
 const BOARD_SIZE: usize = 13;
 const HAND_SIZE: usize = 5;
-const DISCONNECT_GRACE_SECONDS: u64 = 30;
+const DISCONNECT_GRACE_SECONDS: u64 = 300;
 
 pub struct OverPhase {
     pub game_id: GameId,

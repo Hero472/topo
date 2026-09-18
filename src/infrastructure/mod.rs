@@ -6,3 +6,4 @@ pub mod full_state;
 pub mod ws_handler;
 pub mod game_handler;
 pub mod error;
+pub mod invite_code_store;

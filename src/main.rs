@@ -6,8 +6,9 @@ use actix_cors::Cors;
 use tokio::sync::mpsc;
 use topo::app_state::AppState;
 use topo::core::game_id::GameId;
-use topo::infrastructure::game_handler::create_game;
+use topo::infrastructure::game_handler::{create_game, get_game_status};
 use topo::infrastructure::ws_handler::ws_handler;
+use topo::infrastructure::invite_code_store::InviteCodeStore;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
@@ -16,8 +17,12 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<GameId>();
+    
     let rooms_map = Arc::new(Mutex::new(HashMap::new()));
     let rooms_map_clone = Arc::clone(&rooms_map);
+
+    let invite_codes_map = Arc::new(Mutex::new(InviteCodeStore::new()));
+    let invite_codes_map_clone = Arc::clone(&invite_codes_map);
 
     tokio::spawn(async move {
         while let Some(room_id) = shutdown_rx.recv().await {
@@ -25,12 +30,17 @@ async fn main() -> std::io::Result<()> {
                 rooms.remove(&room_id);
                 log::info!("Room {} removed from global map", room_id);
             }
+            
+            if let Ok(mut codes) = invite_codes_map_clone.lock() {
+                codes.remove_game(&room_id);
+            }
         }
     });
 
     let app_state = web::Data::new(AppState {
         rooms: rooms_map,
         room_shutdown_tx: shutdown_tx,
+        invite_codes: invite_codes_map,
     });
 
     println!("Server running at http://localhost:8080");
@@ -43,6 +53,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_state.clone())
             .app_data(PayloadConfig::new(4096))
             .route("/api/games", web::post().to(create_game))
+            .route("/api/games/{invite_code}", web::get().to(get_game_status))
             .route("/ws/{game_id}", web::get().to(ws_handler))
             .route("/health", web::get().to(|| async { "OK" }))
             .route("/{tail:.*}", web::get().to(|req: HttpRequest| async move {

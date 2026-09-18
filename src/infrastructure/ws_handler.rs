@@ -11,6 +11,7 @@ use crate::core::game::actions::Action;
 use crate::core::game_id::GameId;
 use crate::core::player::PlayerId;
 use crate::infrastructure::room::room_command::LobbyAction;
+use crate::utils::invite_code::InviteCode;
 
 // ── Router enum for incoming WebSocket messages ──
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +34,18 @@ pub async fn ws_handler(
     path: web::Path<String>,
     query: web::Query<WsQuery>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let game_id = GameId(path.into_inner());
+
+    let invite_code = InviteCode(path.into_inner());
+
+    let game_id = {
+        let codes = state.invite_codes.lock().unwrap();
+        match codes.resolve(&invite_code) {
+            Some(id) => id.clone(),
+            None => {
+                return Err(actix_web::error::ErrorNotFound("Invalid or expired game invite code"));
+            }
+        }
+    };
 
     let player_uuid = Uuid::parse_str(&query.player_id)
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("Invalid player_id UUID: {}", e)))?;
