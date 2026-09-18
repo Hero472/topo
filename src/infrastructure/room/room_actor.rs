@@ -132,15 +132,6 @@ use crate::infrastructure::error::ErrorCode;
         let msgs1 = drain(&mut rx1).await;
         let msgs2 = drain(&mut rx2).await;
 
-        println!("--- Player 1 received {} messages ---", msgs1.len());
-        for (i, msg) in msgs1.iter().enumerate() {
-            println!("  msg1[{}]: {:?}", i, msg.event);
-        }
-        println!("--- Player 2 received {} messages ---", msgs2.len());
-        for (i, msg) in msgs2.iter().enumerate() {
-            println!("  msg2[{}]: {:?}", i, msg.event);
-        }
-
         assert_eq!(msgs1.len(), 4);
         assert_eq!(msgs2.len(), 4);
 
@@ -286,10 +277,6 @@ use crate::infrastructure::error::ErrorCode;
         sleep(Duration::from_millis(20)).await;   // give actor time
 
         let msgs1 = drain(&mut rx1).await;
-        println!("Player1 received {} events:", msgs1.len());
-        for msg in &msgs1 {
-            println!("  {:?}", msg.event);
-        }
 
         // Must see the disconnect event
         assert!(
@@ -356,11 +343,6 @@ use crate::infrastructure::error::ErrorCode;
 
         // Player2 should see PlayerDisconnected
         let msgs2 = drain(&mut rx2).await;
-        println!("for");
-        for msg in &msgs2 {
-            println!("  {:?}", msg.event);
-        }
-        println!("loop");
         assert!(msgs2.iter().any(|m| matches!(m.event, ServerEvent::PlayerDisconnected { .. })));
 
         // Send timeout
@@ -1062,12 +1044,6 @@ use crate::infrastructure::error::ErrorCode;
                 None
             }
         }).expect("Expected a FullState event at end turn 2");
-
-        println!("FULL STATE");
-        println!("{:?}", full_state1);
-        println!();
-        println!("{:?}", full_state2);
-
     }
 
 }

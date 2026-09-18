@@ -291,10 +291,10 @@ impl GameState {
                 }
 
                 let card = self.players[idx].hand_card(hand_idx).cloned()
-                    .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into() })?;
+                    .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into(), card_id: None })?;
 
                 if card.value != 1 {
-                    return Err(MoveError::DoesNotFit);
+                    return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
                 }
 
                 let card = self.players[idx].take_from_hand(hand_idx.as_usize()).unwrap();
@@ -313,10 +313,10 @@ impl GameState {
                 }
 
                 let card = self.players[idx].hand_card(hand_idx).cloned()
-                    .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into() })?;
+                    .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into(), card_id: None })?;
 
                 if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
-                    return Err(MoveError::DoesNotFit);
+                    return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
                 }
 
                 let card = self.players[idx].take_from_hand(hand_idx.as_usize()).unwrap();
@@ -342,7 +342,7 @@ impl GameState {
                 }
 
                 let card = self.players[idx].pop_personal()
-                    .ok_or(MoveError::InvalidIndex { kind: "personal".into() })?;
+                    .ok_or(MoveError::InvalidIndex { kind: "personal".into(), card_id: None })?;
 
                 if card.value == 1 {
                     let success = match self.scale_manager.open_scale(card) {
@@ -364,7 +364,7 @@ impl GameState {
                 } else {
                     if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
                         self.players[idx].push_personal(card);
-                        return Err(MoveError::DoesNotFit);
+                        return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
                     }
 
                     let (success, discarded) = self.scale_manager.place_on_scale(scale_idx, card)?;
@@ -389,11 +389,11 @@ impl GameState {
                 }
 
                 let card = self.players[idx].take_from_side(stack_idx)
-                    .ok_or(MoveError::InvalidIndex { kind: "stack".into() })?;
+                    .ok_or(MoveError::InvalidIndex { kind: "stack".into(), card_id: None })?;
 
                 if !self.scale_manager.can_place_on_scale(scale_idx, &card) {
                     self.players[idx].hand.push(card);
-                    return Err(MoveError::DoesNotFit);
+                    return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
                 }
 
                 let (success, discarded) = self.scale_manager.place_on_scale(scale_idx, card)?;
@@ -416,7 +416,7 @@ impl GameState {
                     }
 
                     let card = self.players[idx].take_from_hand(hand_idx.as_usize())
-                        .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into() })?;
+                        .ok_or(MoveError::InvalidIndex { kind: "hand_idx".into(), card_id: None })?;
 
                     if self.players[idx].place_on_side(stack_idx, card) {
                         if self.players[idx].has_won() {
@@ -443,6 +443,7 @@ impl GameState {
 
                         return Err(MoveError::InvalidIndex {
                             kind: "stack".into(),
+                            card_id: Some(card.key())
                         });
                     }
                 }
@@ -452,7 +453,6 @@ impl GameState {
                     return Err(MoveError::NotAllowed);
                 }
 
-                // Only a King (13) can be moved from personal to side
                 if self.players[idx].personal_top().map_or(true, |c| c.value != 13) {
                     return Err(MoveError::NotAllowed);
                 }
@@ -467,7 +467,7 @@ impl GameState {
                     })
                 } else {
                     self.players[idx].personal.push(card);
-                    Err(MoveError::InvalidIndex { kind: "stack".into() })
+                    Err(MoveError::InvalidIndex { kind: "stack".into(), card_id: Some(card.key()) })
                 }
             }
         }
@@ -770,7 +770,7 @@ mod tests {
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         gs.players[0].hand[0] = Card { suit: Suit::Hearts, value: 5, deck: DeckColor::Red };
         let result = gs.apply_move(PlayerIdx(0), Action::OpenScale { hand_idx: HandIdx(0) });
-        assert_eq!(result, Err(MoveError::DoesNotFit));
+        assert_eq!(result, Err(MoveError::DoesNotFit { card_id: Some(format!("hearts-5-red")) }));
         assert_eq!(hand_len(&gs, 0), 6);
     }
 
@@ -858,7 +858,7 @@ mod tests {
 
         let _ = gs.apply_move(PlayerIdx(0), Action::Draw);
         let result = gs.apply_move(PlayerIdx(0), Action::PlayHand { hand_idx: HandIdx(0), scale_idx: ScaleIdx(99) });
-        assert_eq!(result, Err(MoveError::DoesNotFit));
+        assert_eq!(result, Err(MoveError::DoesNotFit { card_id: None }));
     }
 
     // ───── Player (getter by player_idx) ──────────────────────────────────

@@ -14,8 +14,8 @@ use super::*;
 
 const BOARD_SIZE: usize = 13;
 const HAND_SIZE: usize = 5;
-const START_COUNTDOWN_SECONDS: u64 = 3;
-const GRACE_PERIOD_SECONDS: u64 = 15;
+const START_COUNTDOWN_SECONDS: u8 = 3;
+const GRACE_PERIOD_SECONDS: u64 = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LobbyState {
@@ -153,7 +153,9 @@ impl RoomPhase for LobbyPhase {
     ) -> Option<Box<dyn RoomPhase + Send>> {
         debug!("HANDLE_LOBBY_CMD: {:?}", cmd);
 
-        if self.state == LobbyState::Starting && !matches!(cmd, RoomCommand::StartGame){
+        if self.state == LobbyState::Starting 
+            && !matches!(cmd, RoomCommand::StartGame | RoomCommand::GameStartingTick { .. }) 
+        {
             return None;
         }
 
@@ -274,10 +276,13 @@ impl RoomPhase for LobbyPhase {
                     let tx = cmd_tx.clone();
 
                     tokio::spawn(async move {
-                        for seconds in (1..=3).rev() {
-                            let _ = tx.send(RoomCommand::GameStartingTick {
+                        for seconds in (1..=START_COUNTDOWN_SECONDS).rev() {
+                            if let Err(e) = tx.send(RoomCommand::GameStartingTick {
                                 seconds_remaining: seconds,
-                            });
+                            }) {
+                                warn!("Countdown aborted: failed to send GameStartingTick. Channel likely closed. Error: {:?}", e);
+                                break; // Stop wasting resources if the room is gone
+                            }
 
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
@@ -295,7 +300,6 @@ impl RoomPhase for LobbyPhase {
                 }
 
                 if !self.all_players_ready(players) {
-                    // Something changed during the countdown.
                     self.state = LobbyState::Waiting;
                     return None;
                 }
@@ -415,7 +419,6 @@ impl RoomPhase for LobbyPhase {
                 if self.state != LobbyState::Starting {
                     return None;
                 }
-
                 broadcast(
                     players,
                     &ServerEvent::GameStarting {

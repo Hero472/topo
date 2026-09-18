@@ -37,6 +37,10 @@ impl Card {
             deck: self.deck
         }
     }
+
+    pub fn key(&self) -> String {
+        format!("{:?}-{:?}-{}", self.deck, self.suit, self.value).to_lowercase()
+    }
 }
 
 #[cfg(test)]

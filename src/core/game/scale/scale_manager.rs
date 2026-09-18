@@ -39,12 +39,12 @@ impl ScaleManager {
         let idx = scale_id.as_usize();
 
         if idx >= MAX_SCALES {
-            return Err(MoveError::DoesNotFit);
+            return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
         }
 
         if self.scales[idx].is_none() {
             if card.value != 1 {
-                return Err(MoveError::DoesNotFit);
+                return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
             }
 
             let mut scale = Scale::new(ScaleIdx(idx));
@@ -86,12 +86,12 @@ impl ScaleManager {
     /// Only succeeds if the card is an Ace.
     pub fn open_scale(&mut self, card: Card) -> Result<MoveSuccess, MoveError> {
         if card.value != 1 {
-            return Err(MoveError::DoesNotFit);
+            return Err(MoveError::DoesNotFit { card_id: Some(card.key()) });
         }
         let slot = self.scales.iter_mut().enumerate().find(|(_, s)| s.is_none());
         let (free_idx, slot) = match slot {
             Some(x) => x,
-            None => return Err(MoveError::DoesNotFit),
+            None => return Err(MoveError::DoesNotFit { card_id: Some(card.key()) }),
         };
         let scale_id = ScaleIdx(free_idx);
         let mut scale = Scale::new(scale_id);
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn open_scale_with_non_ace_fails() {
         let mut mgr = ScaleManager::new();
-        assert_eq!(mgr.open_scale(card(5)), Err(MoveError::DoesNotFit));
+        assert_eq!(mgr.open_scale(card(5)), Err(MoveError::DoesNotFit { card_id: Some(card(5).key()) }));
     }
 
     #[test]
@@ -189,14 +189,14 @@ mod tests {
     #[test]
     fn place_on_nonexistent_scale_fails() {
         let mut mgr = ScaleManager::new();
-        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(2)), Err(MoveError::DoesNotFit));
+        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(2)), Err(MoveError::DoesNotFit { card_id: Some(card(5).key()) }));
     }
 
     #[test]
     fn place_invalid_card_fails() {
         let mut mgr = ScaleManager::new();
         let _ = mgr.open_scale(card(1));
-        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(5)), Err(MoveError::DoesNotFit));
+        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(5)), Err(MoveError::DoesNotFit { card_id: Some(card(5).key()) }));
         assert_eq!(mgr.scales[0].clone().unwrap().cards.len(), 1);
     }
 
@@ -242,7 +242,7 @@ mod tests {
 
         assert!(matches!(mgr.place_on_scale(ScaleIdx(0), card(1)), Ok((MoveSuccess::ScaleOpened { .. }, None))));
 
-        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(5)), Err(MoveError::DoesNotFit));
+        assert_eq!(mgr.place_on_scale(ScaleIdx(0), card(5)), Err(MoveError::DoesNotFit { card_id: Some(card(5).key()) }));
     }
 
     // ---------- King (13) special behavior ----------
@@ -274,7 +274,7 @@ mod tests {
         let _ = mgr.open_scale(card(1));
         let _ = mgr.place_on_scale(ScaleIdx(0), card(13)); // ace -> king
         let result = mgr.place_on_scale(ScaleIdx(0), card(13)); // king after king
-        assert_eq!(result, Err(MoveError::DoesNotFit));
+        assert_eq!(result, Err(MoveError::DoesNotFit { card_id: Some(card(5).key()) }));
     }
 
     #[test]

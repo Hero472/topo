@@ -53,7 +53,7 @@ impl Scale {
 
     pub fn push(&mut self, card: Card) -> Result<MoveSuccess, MoveError> {
         if !self.accepts(&card) {
-            return Err(MoveError::DoesNotFit)
+            return Err(MoveError::DoesNotFit { card_id: Some(card.key()) })
         }
 
         self.cards.push(card);
@@ -82,7 +82,8 @@ mod tests {
     #[test]
     fn cannot_start_with_king() {
         let mut scale = Scale::new(ScaleIdx(0));
-        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit)));
+        let card1 = card(13);
+        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit { card_id: None })));
     }
 
     #[test]
@@ -109,7 +110,7 @@ mod tests {
         let mut scale = Scale::new(ScaleIdx(0));
         assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
         assert!(matches!(scale.push(card(13)), Ok(MoveSuccess::ScalePlaced { .. })));
-        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit)));
+        assert!(matches!(scale.push(card(13)), Err(MoveError::DoesNotFit { card_id: None })));
     }
 
     #[test]
@@ -118,7 +119,7 @@ mod tests {
         assert!(matches!(scale.push(card(1)), Ok(MoveSuccess::ScalePlaced { .. })));
         assert!(matches!(scale.push(card(2)), Ok(MoveSuccess::ScalePlaced { .. })));
         // Expected is 3
-        assert!(matches!(scale.push(card(5)), Err(MoveError::DoesNotFit)));
+        assert!(matches!(scale.push(card(5)), Err(MoveError::DoesNotFit { card_id: None })));
     }
 
     #[test]

@@ -33,10 +33,13 @@ impl MoveSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MoveError {
-    DoesNotFit,
     NotYourTurn,
     NotAllowed,
-    InvalidIndex { kind: String },
+    DoesNotFit { card_id: Option<String> },
+    InvalidIndex { 
+        kind: String,
+        card_id: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -141,7 +144,7 @@ mod tests {
 
     #[test]
     fn move_error_does_not_fit_roundtrip() {
-        let original = MoveError::DoesNotFit;
+        let original = MoveError::DoesNotFit { card_id: None };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: MoveError = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);
@@ -168,7 +171,7 @@ mod tests {
 
     #[test]
     fn move_error_invalid_index_roundtrip() {
-        let original = MoveError::InvalidIndex { kind: "scale".to_string() };
+        let original = MoveError::InvalidIndex { kind: "scale".to_string(), card_id: None };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: MoveError = serde_json::from_str(&json).unwrap();
         assert_eq!(original, deserialized);

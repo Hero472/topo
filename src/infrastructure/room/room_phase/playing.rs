@@ -19,7 +19,7 @@ use crate::infrastructure::full_state::build_full_state;
 use super::*;
 
 /// How long a disconnected player has to reconnect before they forfeit.
-const DISCONNECT_GRACE_SECONDS: u64 = 30;
+const DISCONNECT_GRACE_SECONDS: u64 = 120;
 
 pub struct PlayingPhase {
     pub game_id: GameId,
@@ -107,25 +107,40 @@ impl RoomPhase for PlayingPhase {
                     Ok(result) => result,
                     Err(move_err) => {
                         let code = match move_err {
-                            MoveError::DoesNotFit => ErrorCode::InvalidMove,
+                            MoveError::DoesNotFit { .. } => ErrorCode::InvalidMove,
                             MoveError::NotAllowed => ErrorCode::InvalidMove,
                             MoveError::InvalidIndex { .. } => ErrorCode::CardNotFound,
                             MoveError::NotYourTurn => ErrorCode::NotYourTurn,
                         };
+
+                        let action_card_id = match &move_err {
+                            MoveError::DoesNotFit { card_id } => card_id.clone(),
+                            MoveError::InvalidIndex { card_id, .. } => card_id.clone(),
+                            _ => None,
+                        };
+
+                        let error_message = match &move_err {
+                            MoveError::DoesNotFit { .. } => Some("This card doesn't fit there".into()),
+                            MoveError::NotAllowed => Some("You can't do that right now".into()),
+                            MoveError::InvalidIndex { kind, .. } => Some(format!("Invalid {}", kind)),
+                            MoveError::NotYourTurn => Some("It's not your turn!".into()),
+                        };
+
                         warn!(
                             "Invalid move by player {:?} ({:?}): {:?} -> {:?}",
                             player_id, player_idx, action, move_err
                         );
+
                         send_to(
                             players,
                             player_id,
                             ServerEvent::Error {
                                 code,
-                                message: None,
+                                message: error_message,
                                 details: Some(ErrorDetails {
                                     player_id: Some(player_id),
                                     action: Some(format!("{:?}", action)),
-                                    card_id: None,
+                                    card_id: action_card_id,
                                 }),
                             },
                         );
