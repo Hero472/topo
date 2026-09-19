@@ -47,7 +47,15 @@ async fn main() -> std::io::Result<()> {
 
     let server = HttpServer::new(move || {
         println!("⚙️ Building app instance");
-        let cors = Cors::permissive();
+        
+        let cors = Cors::default()
+            .allowed_origin("https://playtopo.cl")          // Your production frontend
+            .allowed_origin("http://localhost:5173")        // Your local Vite dev server
+            .allowed_origin("https://topo-backend.fly.dev") // Allows direct testing of the backend
+            .allowed_methods(vec!["GET", "POST", "OPTIONS"]) // Add "PUT", "DELETE" if your API uses them
+            .allowed_headers(vec!["Content-Type", "Authorization"])
+            .max_age(3600);
+
         App::new()
             .wrap(cors)
             .app_data(app_state.clone())
