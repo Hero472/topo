@@ -7,3 +7,4 @@
 # Secret key for signing JWT tokens
 # Generate a secure random key: openssl rand -base64 64
 JWT_SECRET=your-super-secure-jwt-secret-key-change-this-in-production
+VITE_API_URL=a

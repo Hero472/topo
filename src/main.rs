@@ -52,7 +52,7 @@ async fn main() -> std::io::Result<()> {
             .allowed_origin("https://playtopo.cl")          // Your production frontend
             .allowed_origin("http://localhost:5173")        // Your local Vite dev server
             .allowed_origin("https://topo-backend.fly.dev") // Allows direct testing of the backend
-            .allowed_methods(vec!["GET", "POST", "OPTIONS"]) // Add "PUT", "DELETE" if your API uses them
+            .allowed_methods(vec!["GET", "POST"]) // Add "PUT", "DELETE" if your API uses them
             .allowed_headers(vec!["Content-Type", "Authorization"])
             .max_age(3600);
 
@@ -77,10 +77,9 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.expect("failed to listen for ctrl-c");
         log::info!("Received Ctrl+C, initiating graceful shutdown...");
-        // true = graceful (wait for connections to finish)
         server_handle.stop(true).await;
     });
 
-    // Run the server until it's stopped
+
     server.await
 }
