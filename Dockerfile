@@ -2,7 +2,7 @@
 # Stage 1: Build the Rust application
 # ==========================================
 # Edition 2024 requires Rust 1.85 or newer
-FROM rust:latest as builder
+FROM rust:latest AS builder
 
 # Install build dependencies (needed for some crates that compile C bindings or OpenSSL)
 RUN apt-get update && apt-get install -y \
