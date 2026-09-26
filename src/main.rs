@@ -49,7 +49,6 @@ async fn main() -> std::io::Result<()> {
         println!("⚙️ Building app instance");
         
         let cors = Cors::default()
-            .allow_any_origin() // DANGER!!!
             .allowed_origin("https://playtopo.cl") 
             .allowed_origin("https://www.playtopo.cl")          // Your production frontend
             .allowed_origin("https://www.playtopo.cl/")
