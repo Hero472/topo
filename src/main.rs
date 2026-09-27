@@ -55,7 +55,7 @@ async fn main() -> std::io::Result<()> {
     .allowed_origin("http://localhost:5173")
     .allowed_origin("https://topo-backend.fly.dev")
     .allowed_methods(vec!["GET", "POST", "OPTIONS"])
-    .allowed_headers(vec!["Content-Type", "Authorization", "Accept"])
+    .allowed_headers(vec!["Content-Type", "Authorization"])
     .max_age(3600);
 
         App::new()
