@@ -1,12 +1,13 @@
-# fly.toml app configuration file generated for topo-backend on 2026-09-19T16:50:14-03:00
+# fly.toml app configuration file generated for topo on 2026-09-27T14:25:30Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'topo-backend'
+app = 'topo'
 primary_region = 'gru'
 
 [build]
+
 [http_service]
   internal_port = 8080
   force_https = true
